@@ -43,6 +43,10 @@
 #include "vpx/vpx_decoder.h"
 #include "vpx/vp8dx.h"
 
+#include "aom/aom_codec.h"
+#include "aom/aom_decoder.h"
+#include "aom/aomdx.h"
+
 #include <vorbis/codec.h>
 
 #include "opus_multistream.h"
@@ -59,6 +63,9 @@
 #ifdef PRMAC_ENV
 	#include <mach/mach.h>
 #endif
+
+void aom_to_vpx_img(vpx_image_t *vpx_img, const aom_image_t *aom_img);
+
 
 int g_num_cpus = 1;
 
@@ -161,7 +168,8 @@ int PrMkvReader::Length(long long* total, long long* available)
 typedef enum {
 	CODEC_NONE = 0,
 	CODEC_VP8,
-	CODEC_VP9
+	CODEC_VP9,
+	CODEC_AV1
 } VideoCodec;
 
 typedef enum {
@@ -199,7 +207,12 @@ typedef struct
 	
 	bool					vpx_setup;
 	vpx_codec_ctx_t			vpx_decoder;
-	
+
+	bool					aom_setup;
+	aom_codec_ctx_t			aom_decoder;
+	unsigned char			*aom_private_data;
+	size_t					aom_private_data_size;
+
 	bool					vorbis_setup;
 	vorbis_info				vi;
 	vorbis_comment			vc;
@@ -415,6 +428,9 @@ SDKOpenFile8(
 		localRecP->audio_codec = CODEC_ANONE;
 		localRecP->audio_start_tstamp = -1;
 		localRecP->vpx_setup = false;
+		localRecP->aom_setup = false;
+		localRecP->aom_private_data = NULL;
+		localRecP->aom_private_data_size = 0;
 		localRecP->vorbis_setup = false;
 		localRecP->opus_dec = NULL;
 		localRecP->sample_map = NULL;
@@ -541,6 +557,7 @@ SDKOpenFile8(
 							{
 								localRecP->video_codec = pVideoTrack->GetCodecId() == std::string("V_VP8") ? CODEC_VP8 :
 															pVideoTrack->GetCodecId() == std::string("V_VP9") ? CODEC_VP9 :
+															pVideoTrack->GetCodecId() == std::string("V_AV1") ? CODEC_AV1 :
 															CODEC_NONE;
 							
 								localRecP->video_track = trackNumber;
@@ -578,7 +595,7 @@ SDKOpenFile8(
 				}
 				
 				
-				if(localRecP->video_track >= 0 && localRecP->vpx_setup == false)
+				if(localRecP->video_track >= 0)
 				{
 					const mkvparser::Track* const pTrack = pTracks->GetTrackByNumber(localRecP->video_track);
 					
@@ -588,34 +605,73 @@ SDKOpenFile8(
 						
 						if(pVideoTrack)
 						{
-							const char* codec_id = pVideoTrack->GetCodecId();
-						
-							const vpx_codec_iface_t *iface = (codec_id == std::string("V_VP8") ? vpx_codec_vp8_dx() :
-																codec_id == std::string("V_VP9") ? vpx_codec_vp9_dx() :
-																NULL);
-							
-							vpx_codec_err_t codec_err = VPX_CODEC_OK;
-							
-							vpx_codec_ctx_t &decoder = localRecP->vpx_decoder;
-							
-							if(iface != NULL)
+							if((localRecP->video_codec == CODEC_VP8 || localRecP->video_codec == CODEC_VP9) && localRecP->vpx_setup == false)
 							{
-								vpx_codec_dec_cfg_t config;
-								config.threads = g_num_cpus;
-								config.w = pVideoTrack->GetWidth();
-								config.h = pVideoTrack->GetHeight();
+								const vpx_codec_iface_t *iface = (localRecP->video_codec == CODEC_VP8 ? vpx_codec_vp8_dx() :
+																	localRecP->video_codec == CODEC_VP9 ? vpx_codec_vp9_dx() :
+																	NULL);
 								
-								// TODO: Explore possibilities of decoding options by setting
-								// VPX_CODEC_USE_POSTPROC here.  Things like VP8_DEMACROBLOCK and
-								// VP8_MFQE (Multiframe Quality Enhancement) could be cool.
-								
-								const vpx_codec_flags_t flags = VPX_CODEC_USE_FRAME_THREADING;
-								
-								codec_err = vpx_codec_dec_init(&decoder, iface, &config, flags);
-								
-								if(codec_err == VPX_CODEC_OK)
-									localRecP->vpx_setup = true;
+								if(iface != NULL)
+								{
+									vpx_codec_dec_cfg_t config;
+									config.threads = g_num_cpus;
+									config.w = pVideoTrack->GetWidth();
+									config.h = pVideoTrack->GetHeight();
+									
+									// TODO: Explore possibilities of decoding options by setting
+									// VPX_CODEC_USE_POSTPROC here.  Things like VP8_DEMACROBLOCK and
+									// VP8_MFQE (Multiframe Quality Enhancement) could be cool.
+									
+									vpx_codec_ctx_t &decoder = localRecP->vpx_decoder;
+									
+									const vpx_codec_flags_t flags = VPX_CODEC_USE_FRAME_THREADING;
+									
+									vpx_codec_err_t codec_err = vpx_codec_dec_init(&decoder, iface, &config, flags);
+									
+									if(codec_err == VPX_CODEC_OK)
+										localRecP->vpx_setup = true;
+								}
 							}
+							else if(localRecP->video_codec == CODEC_AV1 && localRecP->aom_setup == false)
+							{
+								const aom_codec_iface_t *iface = aom_codec_av1_dx();
+								
+								if(iface != NULL)
+								{
+									aom_codec_dec_cfg_t config;
+									config.threads = g_num_cpus;
+									config.w = pVideoTrack->GetWidth();
+									config.h = pVideoTrack->GetHeight();
+									config.allow_lowbitdepth = 1;
+									
+									aom_codec_ctx_t &decoder = localRecP->aom_decoder;
+									
+									const aom_codec_flags_t flags = 0;
+								
+									aom_codec_err_t codec_err = aom_codec_dec_init(&decoder, iface, &config, flags);
+									
+									if(codec_err == AOM_CODEC_OK)
+									{
+										size_t private_size = 0;
+										const unsigned char *private_data = pVideoTrack->GetCodecPrivate(private_size);
+										
+										if(private_data != NULL && private_size > 0)
+										{
+											localRecP->aom_private_data = (unsigned char *)::malloc(private_size);
+											
+											if(localRecP->aom_private_data != NULL)
+											{
+												memcpy(localRecP->aom_private_data, private_data, private_size);
+												localRecP->aom_private_data_size = private_size;
+											}
+										}
+									
+										localRecP->aom_setup = true;
+									}
+								}
+							}
+							else
+								assert(false);
 						}
 					}
 				}
@@ -632,7 +688,7 @@ SDKOpenFile8(
 						
 						if(pAudioTrack)
 						{
-							if(pAudioTrack->GetCodecId() == std::string("A_VORBIS") && localRecP->vorbis_setup == false)
+							if(localRecP->audio_codec == CODEC_VORBIS && localRecP->vorbis_setup == false)
 							{
 								assert(pAudioTrack->GetSeekPreRoll() == 0);
 								assert(pAudioTrack->GetCodecDelay() == 0);
@@ -679,7 +735,7 @@ SDKOpenFile8(
 									}
 								}
 							}
-							else if(pTrack->GetCodecId() == std::string("A_OPUS") && localRecP->opus_dec == NULL)
+							else if(localRecP->audio_codec == CODEC_OPUS && localRecP->opus_dec == NULL)
 							{
 								// Opus specs found here:
 								// http://wiki.xiph.org/MatroskaOpus
@@ -1009,6 +1065,20 @@ SDKQuietFile(
 			localRecP->vpx_setup = false;
 		}
 		
+		if(localRecP->aom_setup)
+		{
+			aom_codec_err_t destroy_err = aom_codec_destroy(&localRecP->aom_decoder);
+			assert(destroy_err == AOM_CODEC_OK);
+			
+			if(localRecP->aom_private_data != NULL)
+			{
+				::free(localRecP->aom_private_data);
+				localRecP->aom_private_data_size = 0;
+			}
+			
+			localRecP->aom_setup = false;
+		}
+		
 		if(localRecP->vorbis_setup)
 		{
 			vorbis_info &vi = localRecP->vi;
@@ -1180,6 +1250,17 @@ SDKAnalysis(
 											"4:2:0";
 									
 			stream << "VP9 " << sampling << " " << (int)localRecP->bit_depth << "-bit";
+			
+		}
+		else if(localRecP->video_codec == CODEC_AV1)
+		{
+			const std::string sampling = localRecP->img_fmt == VPX_IMG_FMT_I422 ? "4:2:2" :
+											localRecP->img_fmt == VPX_IMG_FMT_I444 ? "4:4:4" :
+											localRecP->img_fmt == VPX_IMG_FMT_I42216 ? "4:2:2" :
+											localRecP->img_fmt == VPX_IMG_FMT_I44416 ? "4:4:4" :
+											"4:2:0";
+									
+			stream << "AV1 " << sampling << " " << (int)localRecP->bit_depth << "-bit";
 			
 		}
 		else
@@ -1415,10 +1496,8 @@ SDKGetInfo8(
 									{
 										localRecP->video_start_tstamp = pBlock->GetTime(pCluster);
 										
-										if(localRecP->video_codec == CODEC_VP9)
+										if(localRecP->video_codec == CODEC_VP9 || localRecP->video_codec == CODEC_AV1)
 										{
-											vpx_codec_ctx_t &decoder = localRecP->vpx_decoder;
-											
 											// decode the first frame to get bit depth and sampling information
 											const mkvparser::Block::Frame& blockFrame = pBlock->GetFrame(0);
 											
@@ -1431,68 +1510,113 @@ SDKGetInfo8(
 												
 												if(read_err == PrMkvReader::PrMkvSuccess)
 												{
-													const vpx_codec_err_t decode_err = vpx_codec_decode(&decoder, data, length, NULL, 0);
-													
-													if(decode_err == VPX_CODEC_OK)
+													if(localRecP->video_codec == CODEC_VP9)
 													{
-														vpx_codec_decode(&decoder, NULL, 0, NULL, 0); // flush the decoder
+														const vpx_codec_err_t decode_err = vpx_codec_decode(&localRecP->vpx_decoder, data, length, NULL, 0);
 														
-														vpx_codec_iter_t iter = NULL;
-														
-														vpx_image_t *img = vpx_codec_get_frame(&decoder, &iter);
-														
-														if(img)
+														if(decode_err == VPX_CODEC_OK)
 														{
-															localRecP->bit_depth = img->bit_depth;
-															localRecP->img_fmt = img->fmt;
-															localRecP->color_space = img->cs;
-															localRecP->color_range = img->range;
-														
-															vpx_img_free(img);
+															vpx_codec_decode(&localRecP->vpx_decoder, NULL, 0, NULL, 0); // flush the decoder
 															
+															vpx_codec_iter_t iter = NULL;
 															
-															// Color metadata!
-															// https://mailarchive.ietf.org/arch/search/?email_list=cellar&q=colour
+															vpx_image_t *img = vpx_codec_get_frame(&localRecP->vpx_decoder, &iter);
 															
-															const mkvparser::Colour * const color = pVideoTrack->GetColour();
-															
-															if(color != NULL)
+															if(img)
 															{
-																assert(img->bit_depth == color->bits_per_channel);
+																localRecP->bit_depth = img->bit_depth;
+																localRecP->img_fmt = img->fmt;
+																localRecP->color_space = img->cs;
+																localRecP->color_range = img->range;
+															
+																vpx_img_free(img);
 																
-																const int horizontal_subsampling = (img->fmt == VPX_IMG_FMT_I420 ?  1 :
-																									img->fmt == VPX_IMG_FMT_I422 ?  1 :
-																									img->fmt == VPX_IMG_FMT_I444 ?  0 :
-																									img->fmt == VPX_IMG_FMT_I42016 ?  1 :
-																									img->fmt == VPX_IMG_FMT_I42216 ?  1 :
-																									img->fmt == VPX_IMG_FMT_I44416 ?  0 :
-																									2);
-																									
-																const int vertical_subsampling = (img->fmt == VPX_IMG_FMT_I420 ?  1 :
-																									img->fmt == VPX_IMG_FMT_I422 ?  0 :
-																									img->fmt == VPX_IMG_FMT_I444 ?  0 :
-																									img->fmt == VPX_IMG_FMT_I42016 ?  1 :
-																									img->fmt == VPX_IMG_FMT_I42216 ?  0 :
-																									img->fmt == VPX_IMG_FMT_I44416 ?  0 :
-																									2);
-																									
-																assert(horizontal_subsampling == color->chroma_subsampling_horz);
-																assert(vertical_subsampling == color->chroma_subsampling_vert);
 																
-																if(color->mastering_metadata != NULL)
+																// Color metadata!
+																// https://mailarchive.ietf.org/arch/search/?email_list=cellar&q=colour
+																
+																const mkvparser::Colour * const color = pVideoTrack->GetColour();
+																
+																if(color != NULL)
 																{
-																	// chromaticities
-																	assert(color->mastering_metadata->r != NULL);
-																	assert(color->mastering_metadata->g != NULL);
-																	assert(color->mastering_metadata->b != NULL);
+																	assert(img->bit_depth == color->bits_per_channel);
+																	
+																	const int horizontal_subsampling = (img->fmt == VPX_IMG_FMT_I420 ?  1 :
+																										img->fmt == VPX_IMG_FMT_I422 ?  1 :
+																										img->fmt == VPX_IMG_FMT_I444 ?  0 :
+																										img->fmt == VPX_IMG_FMT_I42016 ?  1 :
+																										img->fmt == VPX_IMG_FMT_I42216 ?  1 :
+																										img->fmt == VPX_IMG_FMT_I44416 ?  0 :
+																										2);
+																										
+																	const int vertical_subsampling = (img->fmt == VPX_IMG_FMT_I420 ?  1 :
+																										img->fmt == VPX_IMG_FMT_I422 ?  0 :
+																										img->fmt == VPX_IMG_FMT_I444 ?  0 :
+																										img->fmt == VPX_IMG_FMT_I42016 ?  1 :
+																										img->fmt == VPX_IMG_FMT_I42216 ?  0 :
+																										img->fmt == VPX_IMG_FMT_I44416 ?  0 :
+																										2);
+																										
+																	assert(horizontal_subsampling == color->chroma_subsampling_horz);
+																	assert(vertical_subsampling == color->chroma_subsampling_vert);
+																	
+																	if(color->mastering_metadata != NULL)
+																	{
+																		// chromaticities
+																		assert(color->mastering_metadata->r != NULL);
+																		assert(color->mastering_metadata->g != NULL);
+																		assert(color->mastering_metadata->b != NULL);
+																	}
 																}
+															}
+															else
+																assert(false);
+														}
+														else
+															result = imFileReadFailed;
+													}
+													else if(localRecP->video_codec == CODEC_AV1)
+													{
+														const aom_codec_err_t decode_err = aom_codec_decode(&localRecP->aom_decoder, data, length, NULL);
+														
+														if(decode_err == AOM_CODEC_OK)
+														{
+															aom_codec_decode(&localRecP->aom_decoder, NULL, 0, NULL); // flush the decoder
+															
+															aom_codec_iter_t iter = NULL;
+															
+															aom_image_t *img = aom_codec_get_frame(&localRecP->aom_decoder, &iter);
+															
+															if(img)
+															{
+																localRecP->bit_depth = img->bit_depth;
+															
+																localRecP->img_fmt = (img->fmt == AOM_IMG_FMT_YV12 ? VPX_IMG_FMT_YV12 :
+																				img->fmt == AOM_IMG_FMT_I420 ? VPX_IMG_FMT_I420 :
+																				img->fmt == AOM_IMG_FMT_AOMYV12 ? VPX_IMG_FMT_I420 : // but with AOM color space?
+																				img->fmt == AOM_IMG_FMT_AOMI420 ? VPX_IMG_FMT_I420 :
+																				img->fmt == AOM_IMG_FMT_I422 ? VPX_IMG_FMT_I422 :
+																				img->fmt == AOM_IMG_FMT_I444 ? VPX_IMG_FMT_I444 :
+																				img->fmt == AOM_IMG_FMT_NV12 ? VPX_IMG_FMT_NV12 :
+																				img->fmt == AOM_IMG_FMT_I42016 ? VPX_IMG_FMT_I42016 :
+																				img->fmt == AOM_IMG_FMT_I42216 ? VPX_IMG_FMT_I42216 :
+																				img->fmt == AOM_IMG_FMT_I44416 ? VPX_IMG_FMT_I44416 :
+																				VPX_IMG_FMT_NONE);
+					
+																localRecP->color_space = (img->cp == AOM_CICP_CP_BT_601 ? VPX_CS_BT_601 :
+																				img->cp == AOM_CICP_CP_SMPTE_240 ? VPX_CS_SMPTE_240 :
+																				img->cp == AOM_CICP_CP_BT_2020 ? VPX_CS_BT_2020 :
+																				img->tc == AOM_CICP_TC_SRGB ? VPX_CS_SRGB :
+																				VPX_CS_BT_709);
+	
+																localRecP->color_range = (img->range == AOM_CR_FULL_RANGE ? VPX_CR_FULL_RANGE : VPX_CR_STUDIO_RANGE);
+															
+																aom_img_free(img);
 															}
 														}
 														else
-															assert(false);
+															result = imFileReadFailed;
 													}
-													else
-														result = imFileReadFailed;
 												}
 												else
 													result = imFileReadFailed;
@@ -1836,6 +1960,8 @@ static void
 CopyImgToPix(const vpx_image_t * const img, PPixHand &ppix, PrSDKPPixSuite *PPixSuite, PrSDKPPix2Suite *PPix2Suite)
 {
 	assert(img->fmt & VPX_IMG_FMT_PLANAR);
+	assert(img->fmt != VPX_IMG_FMT_YV12);
+	assert(img->fmt != VPX_IMG_FMT_NV12);
 	assert(img->cs != VPX_CS_SRGB);
 	assert(img->range == VPX_CR_STUDIO_RANGE);
 
@@ -2142,6 +2268,64 @@ store_vpx_img(
 	return requested_frame;
 }
 
+void
+aom_to_vpx_img(vpx_image_t *vpx_img, const aom_image_t *aom_img)
+{
+	vpx_img->fmt = (aom_img->fmt == AOM_IMG_FMT_YV12 ? VPX_IMG_FMT_YV12 :
+					aom_img->fmt == AOM_IMG_FMT_I420 ? VPX_IMG_FMT_I420 :
+					aom_img->fmt == AOM_IMG_FMT_AOMYV12 ? VPX_IMG_FMT_I420 : // but with AOM color space?
+					aom_img->fmt == AOM_IMG_FMT_AOMI420 ? VPX_IMG_FMT_I420 :
+					aom_img->fmt == AOM_IMG_FMT_I422 ? VPX_IMG_FMT_I422 :
+					aom_img->fmt == AOM_IMG_FMT_I444 ? VPX_IMG_FMT_I444 :
+					aom_img->fmt == AOM_IMG_FMT_NV12 ? VPX_IMG_FMT_NV12 :
+					aom_img->fmt == AOM_IMG_FMT_I42016 ? VPX_IMG_FMT_I42016 :
+					aom_img->fmt == AOM_IMG_FMT_I42216 ? VPX_IMG_FMT_I42216 :
+					aom_img->fmt == AOM_IMG_FMT_I44416 ? VPX_IMG_FMT_I44416 :
+					VPX_IMG_FMT_NONE);
+					
+	vpx_img->cs = (aom_img->cp == AOM_CICP_CP_BT_601 ? VPX_CS_BT_601 :
+					aom_img->cp == AOM_CICP_CP_SMPTE_240 ? VPX_CS_SMPTE_240 :
+					aom_img->cp == AOM_CICP_CP_BT_2020 ? VPX_CS_BT_2020 :
+					aom_img->tc == AOM_CICP_TC_SRGB ? VPX_CS_SRGB :
+					VPX_CS_BT_709);
+	
+	vpx_img->range = (aom_img->range == AOM_CR_FULL_RANGE ? VPX_CR_FULL_RANGE : VPX_CR_STUDIO_RANGE);
+	
+	vpx_img->w = aom_img->w;
+	vpx_img->h = aom_img->h;
+	vpx_img->bit_depth = aom_img->bit_depth;
+	vpx_img->d_w = aom_img->d_w;
+	vpx_img->d_h = aom_img->d_h;
+	vpx_img->r_w = aom_img->r_w;
+	vpx_img->r_h = aom_img->r_h;
+	vpx_img->x_chroma_shift = aom_img->x_chroma_shift;
+	vpx_img->y_chroma_shift = aom_img->y_chroma_shift;
+	
+	assert(AOM_PLANE_Y == VPX_PLANE_Y && AOM_PLANE_U == VPX_PLANE_U && AOM_PLANE_V == VPX_PLANE_V);
+	
+	for(int i=0; i < 3; i++)
+	{
+		vpx_img->planes[i] = aom_img->planes[i];
+		vpx_img->stride[i] = aom_img->stride[i];
+	}
+	
+	vpx_img->bps = aom_img->bps;
+}
+
+static bool
+store_aom_img(
+	const aom_image_t *img,
+	ImporterLocalRec8Ptr localRecP,
+	imSourceVideoRec *sourceVideoRec,
+	const long long decoded_tstamp)
+{
+	vpx_image_t vpx_img;
+	
+	aom_to_vpx_img(&vpx_img, img);
+	
+	return store_vpx_img(&vpx_img, localRecP, sourceVideoRec, decoded_tstamp);
+}
+
 static prMALError 
 SDKGetSourceVideo(
 	imStdParms			*stdParms, 
@@ -2190,7 +2374,7 @@ SDKGetSourceVideo(
 		assert(localRecP->reader != NULL && localRecP->reader->FileRef() == fileRef);
 		assert(localRecP->segment != NULL);
 		
-		if(localRecP->segment && localRecP->video_track >= 0 && localRecP->vpx_setup)
+		if(localRecP->segment && localRecP->video_track >= 0 && (localRecP->vpx_setup || localRecP->aom_setup))
 		{
 			// convert PrTime to timeCode and then to absolute time
 			// http://matroska.org/technical/specs/notes.html#TimecodeScale
@@ -2205,8 +2389,6 @@ SDKGetSourceVideo(
 			const long long tstamp = (timeCode * timeCodeScale) + localRecP->video_start_tstamp;
 			
 			
-			vpx_codec_ctx_t &decoder = localRecP->vpx_decoder;
-		
 			const mkvparser::Tracks* pTracks = localRecP->segment->GetTracks();
 		
 			const mkvparser::Track* const pTrack = pTracks->GetTrackByNumber(localRecP->video_track);
@@ -2264,6 +2446,8 @@ SDKGetSourceVideo(
 
 						bool got_frame = false;
 						
+						bool got_key = false;
+						
 						while((pCluster != NULL) && !pCluster->EOS() && !got_frame && result == malNoError)
 						{
 							assert(pCluster->GetTime() >= 0);
@@ -2279,60 +2463,106 @@ SDKGetSourceVideo(
 							while((pBlockEntry != NULL) && !pBlockEntry->EOS() && result == malNoError)
 							{
 								const mkvparser::Block *pBlock = pBlockEntry->GetBlock();
-							
+								
 								if(pBlock->GetTrackNumber() == localRecP->video_track)
 								{
 									assert(pBlock->GetFrameCount() == 1);
 									assert(pBlock->GetDiscardPadding() == 0);
 									
-									long long packet_tstamp = pBlock->GetTime(pCluster);
-									
-									const mkvparser::Block::Frame& blockFrame = pBlock->GetFrame(0);
-									
-									const unsigned int length = blockFrame.len;
-									uint8_t *data = (uint8_t *)malloc(length);
-									
-									if(data != NULL)
-									{
-										//int read_err = localRecP->reader->Read(blockFrame.pos, blockFrame.len, data);
-										const long read_err = blockFrame.Read(localRecP->reader, data);
+									if(pBlock->IsKey())
+										got_key = true;
 										
-										if(read_err == PrMkvReader::PrMkvSuccess)
+									if(got_key)
+									{
+										long long packet_tstamp = pBlock->GetTime(pCluster);
+										
+										const mkvparser::Block::Frame& blockFrame = pBlock->GetFrame(0);
+										
+										const unsigned int length = blockFrame.len;
+										uint8_t *data = (uint8_t *)malloc(length);
+										
+										if(data != NULL)
 										{
-											const vpx_codec_err_t decode_err = vpx_codec_decode(&decoder, data, length, NULL, 0);
+											//int read_err = localRecP->reader->Read(blockFrame.pos, blockFrame.len, data);
+											const long read_err = blockFrame.Read(localRecP->reader, data);
 											
-											assert(decode_err == VPX_CODEC_OK);
-
-											if(decode_err == VPX_CODEC_OK)
+											if(read_err == PrMkvReader::PrMkvSuccess)
 											{
-												tstamp_queue.push(packet_tstamp);
-												
-												vpx_codec_iter_t iter = NULL;
-												
-												while(vpx_image_t *img = vpx_codec_get_frame(&decoder, &iter))
+												if(localRecP->vpx_setup)
 												{
-													const bool requested_frame = store_vpx_img(img,
-																								localRecP,
-																								sourceVideoRec,
-																								tstamp_queue.front());
-													tstamp_queue.pop();
+													assert(localRecP->video_codec == CODEC_VP8 || localRecP->video_codec == CODEC_VP9);
 													
-													if(requested_frame)
-														got_frame = true;
+													const vpx_codec_err_t decode_err = vpx_codec_decode(&localRecP->vpx_decoder, data, length, NULL, 0);
 													
-													vpx_img_free(img);
+													assert(decode_err == VPX_CODEC_OK);
+
+													if(decode_err == VPX_CODEC_OK)
+													{
+														tstamp_queue.push(packet_tstamp);
+														
+														vpx_codec_iter_t iter = NULL;
+														
+														while(vpx_image_t *img = vpx_codec_get_frame(&localRecP->vpx_decoder, &iter))
+														{
+															const bool requested_frame = store_vpx_img(img,
+																										localRecP,
+																										sourceVideoRec,
+																										tstamp_queue.front());
+															tstamp_queue.pop();
+															
+															if(requested_frame)
+																got_frame = true;
+															
+															vpx_img_free(img);
+														}
+													}
+													else
+														result = imFileReadFailed;
 												}
+												else if(localRecP->aom_setup)
+												{
+													assert(localRecP->video_codec == CODEC_AV1);
+													
+													const aom_codec_err_t decode_err = aom_codec_decode(&localRecP->aom_decoder, data, length, localRecP->aom_private_data);
+													
+													assert(decode_err == AOM_CODEC_OK);
+													
+													if(decode_err == AOM_CODEC_OK)
+													{
+														tstamp_queue.push(packet_tstamp);
+														
+														aom_codec_iter_t iter = NULL;
+														
+														while(aom_image_t *img = aom_codec_get_frame(&localRecP->aom_decoder, &iter))
+														{
+															const bool requested_frame = store_aom_img(img,
+																										localRecP,
+																										sourceVideoRec,
+																										tstamp_queue.front());
+															tstamp_queue.pop();
+															
+															if(requested_frame)
+																got_frame = true;
+															
+															aom_img_free(img);
+														}
+													}
+													else
+														result = imFileReadFailed;
+												}
+												else
+													assert(false);
 											}
 											else
 												result = imFileReadFailed;
+											
+											free(data);
 										}
 										else
-											result = imFileReadFailed;
-										
-										free(data);
+											result = imMemErr;
 									}
 									else
-										result = imMemErr;
+										assert(pBlock->GetTime(pCluster) < tstamp);
 								}
 								
 								long status = pCluster->GetNext(pBlockEntry, pBlockEntry);
@@ -2343,25 +2573,52 @@ SDKGetSourceVideo(
 							// clear out any more frames left over from the multithreaded decode
 							if(result == malNoError)
 							{
-								const vpx_codec_err_t decode_err = vpx_codec_decode(&decoder, NULL, 0, NULL, 0);
-								
-								assert(decode_err == VPX_CODEC_OK);
-								
-								vpx_codec_iter_t iter = NULL;
-								
-								while(vpx_image_t *img = vpx_codec_get_frame(&decoder, &iter))
+								if(localRecP->vpx_setup)
 								{
-									const bool requested_frame = store_vpx_img(img,
-																				localRecP,
-																				sourceVideoRec,
-																				tstamp_queue.front());
-									tstamp_queue.pop();
+									const vpx_codec_err_t decode_err = vpx_codec_decode(&localRecP->vpx_decoder, NULL, 0, NULL, 0);
 									
-									if(requested_frame)
-										got_frame = true;
+									assert(decode_err == VPX_CODEC_OK);
 									
-									vpx_img_free(img);
+									vpx_codec_iter_t iter = NULL;
+									
+									while(vpx_image_t *img = vpx_codec_get_frame(&localRecP->vpx_decoder, &iter))
+									{
+										const bool requested_frame = store_vpx_img(img,
+																					localRecP,
+																					sourceVideoRec,
+																					tstamp_queue.front());
+										tstamp_queue.pop();
+										
+										if(requested_frame)
+											got_frame = true;
+										
+										vpx_img_free(img);
+									}
 								}
+								else if(localRecP->aom_setup)
+								{
+									const aom_codec_err_t decode_err = aom_codec_decode(&localRecP->aom_decoder, NULL, 0, localRecP->aom_private_data);
+									
+									assert(decode_err == AOM_CODEC_OK);
+									
+									aom_codec_iter_t iter = NULL;
+									
+									while(aom_image_t *img = aom_codec_get_frame(&localRecP->aom_decoder, &iter))
+									{
+										const bool requested_frame = store_aom_img(img,
+																					localRecP,
+																					sourceVideoRec,
+																					tstamp_queue.front());
+										tstamp_queue.pop();
+										
+										if(requested_frame)
+											got_frame = true;
+										
+										aom_img_free(img);
+									}
+								}
+								else
+									assert(false);
 								
 								assert(tstamp_queue.size() == 0);
 							}

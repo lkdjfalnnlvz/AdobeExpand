@@ -61,12 +61,18 @@
 #include "vpx/vpx_encoder.h"
 #include "vpx/vp8cx.h"
 
+#include "aom/aom_codec.h"
+#include "aom/aom_encoder.h"
+#include "aom/aomcx.h"
+
 #include <vorbis/codec.h>
 #include <vorbis/vorbisenc.h>
 
 #include "opus_multistream.h"
 
 #include "mkvmuxer/mkvmuxer.h"
+
+void aom_to_vpx_img(vpx_image_t *vpx_img, const aom_image_t *aom_img);
 
 
 class PrMkvWriter : public mkvmuxer::IMkvWriter
@@ -330,7 +336,6 @@ exSDKBeginInstance(
 				const_cast<const void**>(reinterpret_cast<void**>(&(mySettings->windowSuite))));
 		}
 
-
 		instanceRecP->privateData = reinterpret_cast<void*>(mySettings);
 	}
 	else
@@ -353,51 +358,51 @@ exSDKEndInstance(
 	PrSDKMemoryManagerSuite	*memorySuite;
 	if(spBasic != NULL && lRec != NULL)
 	{
-		if (lRec->exportParamSuite)
+		if(lRec->exportParamSuite)
 		{
 			result = spBasic->ReleaseSuite(kPrSDKExportParamSuite, kPrSDKExportParamSuiteVersion);
 		}
-		if (lRec->exportFileSuite)
+		if(lRec->exportFileSuite)
 		{
 			result = spBasic->ReleaseSuite(kPrSDKExportFileSuite, kPrSDKExportFileSuiteVersion);
 		}
-		if (lRec->exportInfoSuite)
+		if(lRec->exportInfoSuite)
 		{
 			result = spBasic->ReleaseSuite(kPrSDKExportInfoSuite, kPrSDKExportInfoSuiteVersion);
 		}
-		if (lRec->exportProgressSuite)
+		if(lRec->exportProgressSuite)
 		{
 			result = spBasic->ReleaseSuite(kPrSDKExportProgressSuite, kPrSDKExportProgressSuiteVersion);
 		}
-		if (lRec->ppixCreatorSuite)
+		if(lRec->ppixCreatorSuite)
 		{
 			result = spBasic->ReleaseSuite(kPrSDKPPixCreatorSuite, kPrSDKPPixCreatorSuiteVersion);
 		}
-		if (lRec->ppixSuite)
+		if(lRec->ppixSuite)
 		{
 			result = spBasic->ReleaseSuite(kPrSDKPPixSuite, kPrSDKPPixSuiteVersion);
 		}
-		if (lRec->ppix2Suite)
+		if(lRec->ppix2Suite)
 		{
 			result = spBasic->ReleaseSuite(kPrSDKPPix2Suite, kPrSDKPPix2SuiteVersion);
 		}
-		if (lRec->sequenceRenderSuite)
+		if(lRec->sequenceRenderSuite)
 		{
 			result = spBasic->ReleaseSuite(kPrSDKSequenceRenderSuite, kPrSDKSequenceRenderSuiteVersion);
 		}
-		if (lRec->sequenceAudioSuite)
+		if(lRec->sequenceAudioSuite)
 		{
 			result = spBasic->ReleaseSuite(kPrSDKSequenceAudioSuite, kPrSDKSequenceAudioSuiteVersion);
 		}
-		if (lRec->timeSuite)
+		if(lRec->timeSuite)
 		{
 			result = spBasic->ReleaseSuite(kPrSDKTimeSuite, kPrSDKTimeSuiteVersion);
 		}
-		if (lRec->windowSuite)
+		if(lRec->windowSuite)
 		{
 			result = spBasic->ReleaseSuite(kPrSDKWindowSuite, kPrSDKWindowSuiteVersion);
 		}
-		if (lRec->memorySuite)
+		if(lRec->memorySuite)
 		{
 			memorySuite = lRec->memorySuite;
 			memorySuite->PrDisposePtr(reinterpret_cast<PrMemoryPtr>(lRec));
@@ -503,7 +508,7 @@ DepthConvert<unsigned char, unsigned char>(const unsigned char &val, const int &
 
 template <typename VUYA_PIX, typename IMG_PIX>
 static void
-CopyVUYAToImg(vpx_image_t *img, vpx_image_t *alpha_img, const char *frameBufferP, const csSDK_int32 rowbytes)
+CopyVUYAToVPXImg(vpx_image_t *img, vpx_image_t *alpha_img, const char *frameBufferP, const csSDK_int32 rowbytes)
 {
 	const unsigned int sub_x = img->x_chroma_shift + 1;
 	const unsigned int sub_y = img->y_chroma_shift + 1;
@@ -570,7 +575,7 @@ CopyVUYAToImg(vpx_image_t *img, vpx_image_t *alpha_img, const char *frameBufferP
 
 template <typename BGRA_PIX, typename IMG_PIX, bool isARGB>
 static void
-CopyBGRAToImg(vpx_image_t *img, vpx_image_t *alpha_img, const char *frameBufferP, const csSDK_int32 rowbytes)
+CopyBGRAToVPXImg(vpx_image_t *img, vpx_image_t *alpha_img, const char *frameBufferP, const csSDK_int32 rowbytes)
 {
 	const unsigned int sub_x = img->x_chroma_shift + 1;
 	const unsigned int sub_y = img->y_chroma_shift + 1;
@@ -689,7 +694,7 @@ CopyBGRAToImg(vpx_image_t *img, vpx_image_t *alpha_img, const char *frameBufferP
 
 
 static void
-CopyPixToImg(vpx_image_t *img, vpx_image_t *alpha_img, const PPixHand &outFrame, PrSDKPPixSuite *pixSuite, PrSDKPPix2Suite *pix2Suite)
+CopyPixToVPXImg(vpx_image_t *img, vpx_image_t *alpha_img, const PPixHand &outFrame, PrSDKPPixSuite *pixSuite, PrSDKPPix2Suite *pix2Suite)
 {
 	prRect boundsRect;
 	pixSuite->GetBounds(outFrame, &boundsRect);
@@ -780,44 +785,58 @@ CopyPixToImg(vpx_image_t *img, vpx_image_t *alpha_img, const PPixHand &outFrame,
 			assert(img->bit_depth == 8);
 			assert(alpha_img == NULL);
 			
-			CopyVUYAToImg<unsigned char, unsigned char>(img, alpha_img, frameBufferP, rowbytes);
+			CopyVUYAToVPXImg<unsigned char, unsigned char>(img, alpha_img, frameBufferP, rowbytes);
 		}
 		else if(pixFormat == PrPixelFormat_VUYA_4444_16u)
 		{
 			assert(img->bit_depth > 8);
 			
-			CopyVUYAToImg<unsigned short, unsigned short>(img, alpha_img, frameBufferP, rowbytes);
+			CopyVUYAToVPXImg<unsigned short, unsigned short>(img, alpha_img, frameBufferP, rowbytes);
 		}
 		else if(pixFormat == PrPixelFormat_BGRA_4444_16u || pixFormat == PrPixelFormat_BGRX_4444_16u)
 		{
 			assert(pixFormat == PrPixelFormat_BGRA_4444_16u || alpha_img == NULL);
 		
 			if(img->bit_depth > 8)
-				CopyBGRAToImg<unsigned short, unsigned short, false>(img, alpha_img, frameBufferP, rowbytes);
+				CopyBGRAToVPXImg<unsigned short, unsigned short, false>(img, alpha_img, frameBufferP, rowbytes);
 			else
-				CopyBGRAToImg<unsigned short, unsigned char, false>(img, alpha_img, frameBufferP, rowbytes);
+				CopyBGRAToVPXImg<unsigned short, unsigned char, false>(img, alpha_img, frameBufferP, rowbytes);
 		}
 		else if(pixFormat == PrPixelFormat_BGRA_4444_8u || pixFormat == PrPixelFormat_BGRX_4444_8u)
 		{
 			assert(pixFormat == PrPixelFormat_BGRA_4444_8u || alpha_img == NULL);
 		
 			if(img->bit_depth > 8)
-				CopyBGRAToImg<unsigned char, unsigned short, false>(img, alpha_img, frameBufferP, rowbytes);
+				CopyBGRAToVPXImg<unsigned char, unsigned short, false>(img, alpha_img, frameBufferP, rowbytes);
 			else
-				CopyBGRAToImg<unsigned char, unsigned char, false>(img, alpha_img, frameBufferP, rowbytes);
+				CopyBGRAToVPXImg<unsigned char, unsigned char, false>(img, alpha_img, frameBufferP, rowbytes);
 		}
 		else if(pixFormat == PrPixelFormat_ARGB_4444_8u || pixFormat == PrPixelFormat_XRGB_4444_8u)
 		{
 			assert(pixFormat == PrPixelFormat_ARGB_4444_8u || alpha_img == NULL);
 		
 			if(img->bit_depth > 8)
-				CopyBGRAToImg<unsigned char, unsigned short, true>(img, alpha_img, frameBufferP, rowbytes);
+				CopyBGRAToVPXImg<unsigned char, unsigned short, true>(img, alpha_img, frameBufferP, rowbytes);
 			else
-				CopyBGRAToImg<unsigned char, unsigned char, true>(img, alpha_img, frameBufferP, rowbytes);
+				CopyBGRAToVPXImg<unsigned char, unsigned char, true>(img, alpha_img, frameBufferP, rowbytes);
 		}
 		else
 			assert(false);
 	}
+}
+
+
+static void
+CopyPixToAOMImg(aom_image_t *img, aom_image_t *alpha_img, const PPixHand &outFrame, PrSDKPPixSuite *pixSuite, PrSDKPPix2Suite *pix2Suite)
+{
+	vpx_image_t vpx_img, vpx_alpha_img;
+	
+	aom_to_vpx_img(&vpx_img, img);
+	
+	if(alpha_img != NULL)
+		aom_to_vpx_img(&vpx_alpha_img, alpha_img);
+	
+	CopyPixToVPXImg(&vpx_img, (alpha_img == NULL ? NULL : &vpx_alpha_img), outFrame, pixSuite, pix2Suite);
 }
 
 
@@ -1127,9 +1146,9 @@ exSDKExport(
 								audioFormat == kPrAudioChannelType_Mono ? 1 :
 								2);
 	
-	exParamValues codecP, methodP, videoQualityP, bitrateP, twoPassP, keyframeMaxDistanceP, samplingP, bitDepthP, alphaP, customArgsP;
+	exParamValues videoCodecP, methodP, videoQualityP, bitrateP, twoPassP, keyframeMaxDistanceP, samplingP, bitDepthP, alphaP, customArgsP;
 		
-	paramSuite->GetParamValue(exID, gIdx, WebMVideoCodec, &codecP);
+	paramSuite->GetParamValue(exID, gIdx, WebMVideoCodec, &videoCodecP);
 	paramSuite->GetParamValue(exID, gIdx, WebMVideoMethod, &methodP);
 	paramSuite->GetParamValue(exID, gIdx, WebMVideoQuality, &videoQualityP);
 	paramSuite->GetParamValue(exID, gIdx, WebMVideoBitrate, &bitrateP);
@@ -1150,10 +1169,11 @@ exSDKExport(
 		bitDepthP.value.intValue = 8;
 	
 	
-	const bool use_vp9 = (codecP.value.intValue == WEBM_CODEC_VP9);
+	const WebM_Video_Codec video_codec = (WebM_Video_Codec)videoCodecP.value.intValue;
+	const bool use_vp8 = (video_codec == WEBM_CODEC_VP8);
 	const WebM_Video_Method method = (WebM_Video_Method)methodP.value.intValue;
-	const WebM_Chroma_Sampling chroma = (use_vp9 ? (WebM_Chroma_Sampling)samplingP.value.intValue : WEBM_420);
-	const int bit_depth = (use_vp9 ? bitDepthP.value.intValue : 8);
+	const WebM_Chroma_Sampling chroma = (use_vp8 ? WEBM_420 : (WebM_Chroma_Sampling)samplingP.value.intValue);
+	const int bit_depth = (use_vp8 ? 8 : bitDepthP.value.intValue);
 	const bool use_alpha = alphaP.value.intValue;
 
 	char customArgs[256];
@@ -1170,6 +1190,8 @@ exSDKExport(
 	exParamValues autoBitrateP, opusBitrateP;
 	paramSuite->GetParamValue(exID, gIdx, WebMOpusAutoBitrate, &autoBitrateP);
 	paramSuite->GetParamValue(exID, gIdx, WebMOpusBitrate, &opusBitrateP);
+	
+	const WebM_Audio_Codec audio_codec = (WebM_Audio_Codec)audioCodecP.value.intValue;
 	
 	
 	const PrPixelFormat yuv_format8 = (use_alpha ? PrPixelFormat_BGRA_4444_16u :
@@ -1260,7 +1282,6 @@ exSDKExport(
 	{
 		const bool vbr_pass = (passes > 1 && pass == 0);
 		
-
 		if(passes > 1)
 		{
 			prUTF16Char utf_str[256];
@@ -1270,184 +1291,350 @@ exSDKExport(
 			else
 				utf16ncpy(utf_str, "Encoding WebM movie", 255);
 			
-			// This doesn't seem to be doing anything
 			mySettings->exportProgressSuite->SetProgressString(exID, utf_str);
 		}
 		
 		
-	
 		exRatioValue fps;
 		get_framerate(ticksPerSecond, frameRateP.value.timeValue, &fps);
 		
 		
-		vpx_codec_err_t codec_err = VPX_CODEC_OK;
+		vpx_codec_err_t vpx_codec_err = VPX_CODEC_OK;
 		
-		vpx_codec_ctx_t encoder;
-		vpx_codec_iter_t encoder_iter = NULL;
-		std::queue<vpx_codec_cx_pkt_t> encoder_queue;
+		vpx_codec_ctx_t vpx_encoder;
+		vpx_codec_iter_t vpx_encoder_iter = NULL;
+		std::queue<vpx_codec_cx_pkt_t> vpx_encoder_queue;
+		
+		vpx_codec_ctx_t vpx_alpha_encoder;
+		vpx_codec_iter_t vpx_alpha_encoder_iter = NULL;
+		std::queue<vpx_codec_cx_pkt_t> vpx_alpha_encoder_queue;
+		
+		
+		aom_codec_err_t aom_codec_err = AOM_CODEC_OK;
+		
+		aom_codec_ctx_t aom_encoder;
+		aom_codec_iter_t aom_encoder_iter = NULL;
+		std::queue<aom_codec_cx_pkt_t> aom_encoder_queue;
+		
+		aom_codec_ctx_t aom_alpha_encoder;
+		aom_codec_iter_t aom_alpha_encoder_iter = NULL;
+		std::queue<aom_codec_cx_pkt_t> aom_alpha_encoder_queue;
+		
 		
 		const uint64_t alpha_id = 1;
-		vpx_codec_ctx_t alpha_encoder;
-		vpx_codec_iter_t alpha_encoder_iter = NULL;
-		std::queue<vpx_codec_cx_pkt_t> alpha_encoder_queue;
-
+		
 		const bool copy_buffers = use_alpha;
 		
-		unsigned long deadline = VPX_DL_GOOD_QUALITY;
+		unsigned long vpx_deadline = VPX_DL_GOOD_QUALITY;
 
 												
 		PrTime videoEncoderTime = exportInfoP->startTime;
 		
 		if(exportInfoP->exportVideo)
 		{
-			vpx_codec_iface_t *iface = use_vp9 ? vpx_codec_vp9_cx() : vpx_codec_vp8_cx();
-			
-			vpx_codec_enc_cfg_t config;
-			vpx_codec_enc_config_default(iface, &config, 0);
-			
-			config.g_w = renderParms.inWidth;
-			config.g_h = renderParms.inHeight;
-			
-			// (only applies to VP9)
-			// Profile 0 is 4:2:0 only
-			// Profile 1 can do 4:4:4 and 4:2:2
-			// Profile 2 can do 10- and 12-bit, 4:2:0 only
-			// Profile 3 can do 10- and 12-bit, 4:4:4 and 4:2:2
-			config.g_profile = (chroma > WEBM_420 ?
-									(bit_depth > 8 ? 3 : 1) :
-									(bit_depth > 8 ? 2 : 0) );
-			
-			config.g_bit_depth = (bit_depth == 12 ? VPX_BITS_12 :
-									bit_depth == 10 ? VPX_BITS_10 :
-									VPX_BITS_8);
-			
-			config.g_input_bit_depth = config.g_bit_depth;
-			
-			
-			if(method == WEBM_METHOD_CONSTANT_QUALITY || method == WEBM_METHOD_CONSTRAINED_QUALITY)
+			if(video_codec == WEBM_CODEC_VP8 || video_codec == WEBM_CODEC_VP9)
 			{
-				config.rc_end_usage = (method == WEBM_METHOD_CONSTANT_QUALITY ? VPX_Q : VPX_CQ);
-				config.g_pass = VPX_RC_ONE_PASS;
+				vpx_codec_iface_t *iface = (video_codec == WEBM_CODEC_VP9) ? vpx_codec_vp9_cx() : vpx_codec_vp8_cx();
 				
-				const int min_q = config.rc_min_quantizer + 1;
-				const int max_q = config.rc_max_quantizer;
+				vpx_codec_enc_cfg_t config;
+				vpx_codec_enc_config_default(iface, &config, 0);
 				
-				// our 0...100 slider will be used to bring max_q down to min_q
-				config.rc_max_quantizer = min_q + ((((float)(100 - videoQualityP.value.intValue) / 100.f) * (max_q - min_q)) + 0.5f);
-			}
-			else
-			{
-				if(method == WEBM_METHOD_VBR)
-				{
-					config.rc_end_usage = VPX_VBR;
-				}
-				else if(method == WEBM_METHOD_BITRATE)
-				{
-					config.rc_end_usage = VPX_CBR;
-					config.g_pass = VPX_RC_ONE_PASS;
-				}
-				else
-					assert(false);
-			}
-			
-			if(passes == 2)
-			{
-				if(vbr_pass)
-				{
-					config.g_pass = VPX_RC_FIRST_PASS;
-				}
-				else
-				{
-					config.g_pass = VPX_RC_LAST_PASS;
-					
-					config.rc_twopass_stats_in.buf = vbr_buffer;
-					config.rc_twopass_stats_in.sz = vbr_buffer_size;
-				}
-			}
-			else
-				config.g_pass = VPX_RC_ONE_PASS;
+				config.g_w = renderParms.inWidth;
+				config.g_h = renderParms.inHeight;
 				
-			
-			config.rc_target_bitrate = bitrateP.value.intValue;
-			
-			
-			config.g_threads = g_num_cpus;
-			
-			config.g_timebase.num = fps.denominator;
-			config.g_timebase.den = fps.numerator;
-			
-			config.kf_max_dist = keyframeMaxDistanceP.value.intValue;
-			
-			
-			ConfigureEncoderPre(config, deadline, customArgs);
-			
-			assert(config.kf_max_dist >= config.kf_min_dist);
-			
-			
-			vpx_codec_enc_cfg_t alpha_config = config;
-			
-			if(use_alpha)
-			{
-				alpha_config.kf_min_dist = alpha_config.kf_max_dist = config.kf_min_dist = config.kf_max_dist;
+				// (only applies to VP9)
+				// Profile 0 is 4:2:0 only
+				// Profile 1 can do 4:4:4 and 4:2:2
+				// Profile 2 can do 10- and 12-bit, 4:2:0 only
+				// Profile 3 can do 10- and 12-bit, 4:4:4 and 4:2:2
+				config.g_profile = (chroma > WEBM_420 ?
+										(bit_depth > 8 ? 3 : 1) :
+										(bit_depth > 8 ? 2 : 0) );
 				
-				alpha_config.rc_target_bitrate = config.rc_target_bitrate / 3;
+				config.g_bit_depth = (bit_depth == 12 ? VPX_BITS_12 :
+										bit_depth == 10 ? VPX_BITS_10 :
+										VPX_BITS_8);
 				
-				config.rc_target_bitrate = config.rc_target_bitrate * 2 / 3;
+				config.g_input_bit_depth = config.g_bit_depth;
 				
-				if(passes == 2 && !vbr_pass)
-				{
-					config.rc_twopass_stats_in.buf = alpha_vbr_buffer;
-					config.rc_twopass_stats_in.sz = alpha_vbr_buffer_size;
-				}
-			}
-			
-			
-			const vpx_codec_flags_t flags = (config.g_bit_depth == VPX_BITS_8 ? 0 : VPX_CODEC_USE_HIGHBITDEPTH);
-			
-			codec_err = vpx_codec_enc_init(&encoder, iface, &config, flags);
-			
-			if(use_alpha && codec_err == VPX_CODEC_OK)
-			{
-				codec_err = vpx_codec_enc_init(&alpha_encoder, iface, &alpha_config, flags);
-			}
-			
-			
-			if(codec_err == VPX_CODEC_OK)
-			{
+				
 				if(method == WEBM_METHOD_CONSTANT_QUALITY || method == WEBM_METHOD_CONSTRAINED_QUALITY)
 				{
-					const int min_q = config.rc_min_quantizer;
+					config.rc_end_usage = (method == WEBM_METHOD_CONSTANT_QUALITY ? VPX_Q : VPX_CQ);
+					config.g_pass = VPX_RC_ONE_PASS;
+					
+					const int min_q = config.rc_min_quantizer + 1;
 					const int max_q = config.rc_max_quantizer;
 					
-					// CQ Level should be between min_q and max_q
-					const int cq_level = (min_q + max_q) / 2;
-				
-					vpx_codec_control(&encoder, VP8E_SET_CQ_LEVEL, cq_level);
-					
-					if(use_alpha)
-						vpx_codec_control(&alpha_encoder, VP8E_SET_CQ_LEVEL, cq_level);
+					// our 0...100 slider will be used to bring max_q down to min_q
+					config.rc_max_quantizer = min_q + ((((float)(100 - videoQualityP.value.intValue) / 100.f) * (max_q - min_q)) + 0.5f);
+				}
+				else
+				{
+					if(method == WEBM_METHOD_VBR)
+					{
+						config.rc_end_usage = VPX_VBR;
+					}
+					else if(method == WEBM_METHOD_BITRATE)
+					{
+						config.rc_end_usage = VPX_CBR;
+						config.g_pass = VPX_RC_ONE_PASS;
+					}
+					else
+						assert(false);
 				}
 				
-				if(use_vp9)
+				if(passes == 2)
 				{
-					vpx_codec_control(&encoder, VP8E_SET_CPUUSED, 2); // much faster if we do this
+					if(vbr_pass)
+					{
+						config.g_pass = VPX_RC_FIRST_PASS;
+					}
+					else
+					{
+						config.g_pass = VPX_RC_LAST_PASS;
+						
+						config.rc_twopass_stats_in.buf = vbr_buffer;
+						config.rc_twopass_stats_in.sz = vbr_buffer_size;
+					}
+				}
+				else
+					config.g_pass = VPX_RC_ONE_PASS;
 					
-					vpx_codec_control(&encoder, VP9E_SET_TILE_COLUMNS, mylog2(g_num_cpus)); // this gives us some multithreading
-					vpx_codec_control(&encoder, VP9E_SET_FRAME_PARALLEL_DECODING, 1);
+				
+				config.rc_target_bitrate = bitrateP.value.intValue;
+				
+				
+				config.g_threads = g_num_cpus;
+				
+				config.g_timebase.num = fps.denominator;
+				config.g_timebase.den = fps.numerator;
+				
+				config.kf_max_dist = keyframeMaxDistanceP.value.intValue;
+				
+				
+				ConfigureVPXEncoderPre(config, vpx_deadline, customArgs);
+				
+				assert(config.kf_max_dist >= config.kf_min_dist);
+				
+				
+				vpx_codec_enc_cfg_t alpha_config = config;
+				
+				if(use_alpha)
+				{
+					alpha_config.kf_min_dist = alpha_config.kf_max_dist = config.kf_min_dist = config.kf_max_dist;
+					
+					alpha_config.rc_target_bitrate = config.rc_target_bitrate / 3;
+					
+					config.rc_target_bitrate = config.rc_target_bitrate * 2 / 3;
+					
+					if(passes == 2 && !vbr_pass)
+					{
+						config.rc_twopass_stats_in.buf = alpha_vbr_buffer;
+						config.rc_twopass_stats_in.sz = alpha_vbr_buffer_size;
+					}
+				}
+				
+				
+				const vpx_codec_flags_t flags = (config.g_bit_depth == VPX_BITS_8 ? 0 : VPX_CODEC_USE_HIGHBITDEPTH);
+				
+				vpx_codec_err = vpx_codec_enc_init(&vpx_encoder, iface, &config, flags);
+				
+				if(use_alpha && vpx_codec_err == VPX_CODEC_OK)
+				{
+					vpx_codec_err = vpx_codec_enc_init(&vpx_alpha_encoder, iface, &alpha_config, flags);
+				}
+				
+				
+				if(vpx_codec_err == VPX_CODEC_OK)
+				{
+					if(method == WEBM_METHOD_CONSTANT_QUALITY || method == WEBM_METHOD_CONSTRAINED_QUALITY)
+					{
+						const int min_q = config.rc_min_quantizer;
+						const int max_q = config.rc_max_quantizer;
+						
+						// CQ Level should be between min_q and max_q
+						const int cq_level = (min_q + max_q) / 2;
+					
+						vpx_codec_control(&vpx_encoder, VP8E_SET_CQ_LEVEL, cq_level);
+						
+						if(use_alpha)
+							vpx_codec_control(&vpx_alpha_encoder, VP8E_SET_CQ_LEVEL, cq_level);
+					}
+					
+					if(video_codec == WEBM_CODEC_VP9)
+					{
+						vpx_codec_control(&vpx_encoder, VP8E_SET_CPUUSED, 2); // much faster if we do this
+						
+						vpx_codec_control(&vpx_encoder, VP9E_SET_TILE_COLUMNS, mylog2(g_num_cpus)); // this gives us some multithreading
+						vpx_codec_control(&vpx_encoder, VP9E_SET_FRAME_PARALLEL_DECODING, 1);
+						
+						if(use_alpha)
+						{
+							vpx_codec_control(&vpx_alpha_encoder, VP8E_SET_CPUUSED, 2);
+							
+							vpx_codec_control(&vpx_alpha_encoder, VP9E_SET_TILE_COLUMNS, mylog2(g_num_cpus));
+							vpx_codec_control(&vpx_alpha_encoder, VP9E_SET_FRAME_PARALLEL_DECODING, 1);
+						}
+					}
+				
+					ConfigureVPXEncoderPost(&vpx_encoder, customArgs);
+					
+					if(use_alpha)
+						ConfigureVPXEncoderPost(&vpx_alpha_encoder, customArgs);
+				}
+			}
+			else
+			{
+				assert(video_codec == WEBM_CODEC_AV1);
+				
+				aom_codec_iface_t *iface = aom_codec_av1_cx();
+				
+				aom_codec_enc_cfg_t config;
+				aom_codec_enc_config_default(iface, &config, AOM_USAGE_GOOD_QUALITY);
+				
+				config.g_w = renderParms.inWidth;
+				config.g_h = renderParms.inHeight;
+				
+				// Profile 0 (Main) can do 8- and 10-bit 4:2:0 and 4:0:0 (monochrome)
+				// Profile 1 (High) adds 4:4:4
+				// Profile 2 (Professional) adds 12-bit and 4:2:2
+				config.g_profile = (bit_depth == 12 || chroma == WEBM_422) ? 2 :
+									chroma == WEBM_444 ? 1 : 0;
+				
+				config.g_bit_depth = (bit_depth == 12 ? AOM_BITS_12 :
+										bit_depth == 10 ? AOM_BITS_10 :
+										AOM_BITS_8);
+				
+				config.g_input_bit_depth = config.g_bit_depth;
+				
+				
+				if(method == WEBM_METHOD_CONSTANT_QUALITY || method == WEBM_METHOD_CONSTRAINED_QUALITY)
+				{
+					config.rc_end_usage = (method == WEBM_METHOD_CONSTANT_QUALITY ? AOM_Q : AOM_CQ);
+					config.g_pass = AOM_RC_ONE_PASS;
+					
+					const int min_q = config.rc_min_quantizer + 1;
+					const int max_q = config.rc_max_quantizer;
+					
+					// our 0...100 slider will be used to bring max_q down to min_q
+					config.rc_max_quantizer = min_q + ((((float)(100 - videoQualityP.value.intValue) / 100.f) * (max_q - min_q)) + 0.5f);
+				}
+				else
+				{
+					if(method == WEBM_METHOD_VBR)
+					{
+						config.rc_end_usage = AOM_VBR;
+					}
+					else if(method == WEBM_METHOD_BITRATE)
+					{
+						config.rc_end_usage = AOM_CBR;
+						config.g_pass = AOM_RC_ONE_PASS;
+					}
+					else
+						assert(false);
+				}
+				
+				if(passes == 2)
+				{
+					if(vbr_pass)
+					{
+						config.g_pass = AOM_RC_FIRST_PASS;
+					}
+					else
+					{
+						config.g_pass = AOM_RC_LAST_PASS;
+						
+						config.rc_twopass_stats_in.buf = vbr_buffer;
+						config.rc_twopass_stats_in.sz = vbr_buffer_size;
+					}
+				}
+				else
+					config.g_pass = AOM_RC_ONE_PASS;
+					
+				
+				config.rc_target_bitrate = bitrateP.value.intValue;
+				
+				
+				config.g_threads = g_num_cpus;
+				
+				config.g_timebase.num = fps.denominator;
+				config.g_timebase.den = fps.numerator;
+				
+				config.kf_max_dist = keyframeMaxDistanceP.value.intValue;
+				
+				
+				ConfigureAOMEncoderPre(config, customArgs);
+				
+				assert(config.kf_max_dist >= config.kf_min_dist);
+				
+				
+				aom_codec_enc_cfg_t alpha_config = config;
+				
+				if(use_alpha)
+				{
+					alpha_config.monochrome = 1;
+				
+					alpha_config.g_profile = (bit_depth == 12 ? 2 : 0);
+				
+					alpha_config.kf_min_dist = alpha_config.kf_max_dist = config.kf_min_dist = config.kf_max_dist;
+					
+					alpha_config.rc_target_bitrate = config.rc_target_bitrate / 3;
+					
+					config.rc_target_bitrate = config.rc_target_bitrate * 2 / 3;
+					
+					if(passes == 2 && !vbr_pass)
+					{
+						config.rc_twopass_stats_in.buf = alpha_vbr_buffer;
+						config.rc_twopass_stats_in.sz = alpha_vbr_buffer_size;
+					}
+				}
+				
+				
+				const aom_codec_flags_t flags = (config.g_bit_depth == AOM_BITS_8 ? 0 : AOM_CODEC_USE_HIGHBITDEPTH);
+				
+				aom_codec_err = aom_codec_enc_init(&aom_encoder, iface, &config, flags);
+				
+				if(use_alpha && aom_codec_err == AOM_CODEC_OK)
+				{
+					aom_codec_err = aom_codec_enc_init(&aom_alpha_encoder, iface, &alpha_config, flags);
+				}
+				
+				
+				if(aom_codec_err == AOM_CODEC_OK)
+				{
+					if(method == WEBM_METHOD_CONSTANT_QUALITY || method == WEBM_METHOD_CONSTRAINED_QUALITY)
+					{
+						const int min_q = config.rc_min_quantizer;
+						const int max_q = config.rc_max_quantizer;
+						
+						// CQ Level should be between min_q and max_q
+						const int cq_level = (min_q + max_q) / 2;
+					
+						aom_codec_control(&aom_encoder, AOME_SET_CQ_LEVEL, cq_level);
+						
+						if(use_alpha)
+							aom_codec_control(&aom_alpha_encoder, AOME_SET_CQ_LEVEL, cq_level);
+					}
+					
+					aom_codec_control(&aom_encoder, AOME_SET_CPUUSED, 2); // much faster if we do this
+					
+					aom_codec_control(&aom_encoder, AV1E_SET_TILE_COLUMNS, mylog2(g_num_cpus)); // this gives us some multithreading
+					aom_codec_control(&aom_encoder, AV1E_SET_FRAME_PARALLEL_DECODING, 1);
 					
 					if(use_alpha)
 					{
-						vpx_codec_control(&alpha_encoder, VP8E_SET_CPUUSED, 2);
+						aom_codec_control(&aom_alpha_encoder, AOME_SET_CPUUSED, 2);
 						
-						vpx_codec_control(&alpha_encoder, VP9E_SET_TILE_COLUMNS, mylog2(g_num_cpus));
-						vpx_codec_control(&alpha_encoder, VP9E_SET_FRAME_PARALLEL_DECODING, 1);
+						aom_codec_control(&aom_alpha_encoder, AV1E_SET_TILE_COLUMNS, mylog2(g_num_cpus));
+						aom_codec_control(&aom_alpha_encoder, AV1E_SET_FRAME_PARALLEL_DECODING, 1);
 					}
-				}
-			
-				ConfigureEncoderPost(&encoder, customArgs);
 				
-				if(use_alpha)
-					ConfigureEncoderPost(&alpha_encoder, customArgs);
+					ConfigureAOMEncoderPost(&aom_encoder, customArgs);
+					
+					if(use_alpha)
+						ConfigureAOMEncoderPost(&aom_alpha_encoder, customArgs);
+				}
 			}
 		}
 		
@@ -1485,7 +1672,7 @@ exSDKExport(
 		{
 			mySettings->sequenceAudioSuite->GetMaxBlip(audioRenderID, frameRateP.value.timeValue, &maxBlip);
 			
-			if(audioCodecP.value.intValue == WEBM_CODEC_OPUS)
+			if(audio_codec == WEBM_CODEC_OPUS)
 			{
 				const int sample_rate = 48000;
 				
@@ -1676,7 +1863,7 @@ exSDKExport(
 		}
 		
 		
-		if(codec_err == VPX_CODEC_OK && v_err == OV_OK)
+		if(vpx_codec_err == VPX_CODEC_OK && aom_codec_err == AOM_CODEC_OK && v_err == OV_OK)
 		{
 			// I'd say think about lowering this to get better precision,
 			// but I get some messed up stuff when I do that.  Maybe a bug in the muxer?
@@ -1728,8 +1915,17 @@ exSDKExport(
 					
 					video->set_frame_rate((double)fps.numerator / (double)fps.denominator);
 
-					video->set_codec_id(codecP.value.intValue == WEBM_CODEC_VP9 ? mkvmuxer::Tracks::kVp9CodecId :
+					video->set_codec_id(video_codec == WEBM_CODEC_AV1 ? mkvmuxer::Tracks::kAv1CodecId :
+											video_codec == WEBM_CODEC_VP9 ? mkvmuxer::Tracks::kVp9CodecId :
 											mkvmuxer::Tracks::kVp8CodecId);
+					
+					if(video_codec == WEBM_CODEC_AV1)
+					{
+						aom_fixed_buf_t *privateH = aom_codec_get_global_headers(&aom_encoder);
+						
+						if(privateH != NULL)
+							video->SetCodecPrivate((const uint8_t *)privateH->buf, privateH->sz);
+					}
 											
 					if(renderParms.inPixelAspectRatioNumerator != renderParms.inPixelAspectRatioDenominator)
 					{
@@ -1777,7 +1973,7 @@ exSDKExport(
 				
 				if(exportInfoP->exportAudio)
 				{
-					if(audioCodecP.value.intValue == WEBM_CODEC_OPUS)
+					if(audio_codec == WEBM_CODEC_OPUS)
 					{
 						assert(sampleRateP.value.floatValue == 48000.f);
 						
@@ -1788,10 +1984,10 @@ exSDKExport(
 					
 					mkvmuxer::AudioTrack* const audio = static_cast<mkvmuxer::AudioTrack *>(muxer_segment->GetTrackByNumber(audio_track));
 					
-					audio->set_codec_id(audioCodecP.value.intValue == WEBM_CODEC_OPUS ? mkvmuxer::Tracks::kOpusCodecId :
+					audio->set_codec_id(audio_codec == WEBM_CODEC_OPUS ? mkvmuxer::Tracks::kOpusCodecId :
 										mkvmuxer::Tracks::kVorbisCodecId);
 					
-					if(audioCodecP.value.intValue == WEBM_CODEC_OPUS)
+					if(audio_codec == WEBM_CODEC_OPUS)
 					{
 						// http://wiki.xiph.org/MatroskaOpus
 						
@@ -1828,7 +2024,9 @@ exSDKExport(
 													
 			assert(ticksPerSecond % (PrAudioSample)sampleRateP.value.floatValue == 0);
 			
-		
+			
+			bool summary_packet_written = false;
+			
 			PrTime videoTime = exportInfoP->startTime;
 			
 			while(videoTime <= exportInfoP->endTime && result == malNoError)
@@ -1850,7 +2048,7 @@ exSDKExport(
 				{
 					const bool last_frame = (videoTime > (exportInfoP->endTime - frameRateP.value.timeValue));
 							
-					if(audioCodecP.value.intValue == WEBM_CODEC_OPUS)
+					if(audio_codec == WEBM_CODEC_OPUS)
 					{
 						assert(opus != NULL);
 						
@@ -2009,65 +2207,25 @@ exSDKExport(
 					
 					while(!made_frame && result == suiteError_NoError)
 					{
-						while(const vpx_codec_cx_pkt_t *pkt = vpx_codec_get_cx_data(&encoder, &encoder_iter))
+						if(video_codec == WEBM_CODEC_VP8 || video_codec == WEBM_CODEC_VP9)
 						{
-							if(vbr_pass)
-							{
-								if(pkt->kind == VPX_CODEC_STATS_PKT)
-								{
-									vpx_codec_cx_pkt_t q_pkt = *pkt;
-
-									if(copy_buffers)
-									{
-										q_pkt.data.twopass_stats.buf = malloc(q_pkt.data.twopass_stats.sz);
-										if(q_pkt.data.twopass_stats.buf == NULL)
-											throw exportReturn_ErrMemory;
-										memcpy(q_pkt.data.twopass_stats.buf, pkt->data.twopass_stats.buf, q_pkt.data.twopass_stats.sz);
-									}
-
-									encoder_queue.push(q_pkt);
-								}
-							}
-							else
-							{
-								if(pkt->kind == VPX_CODEC_CX_FRAME_PKT)
-								{
-									vpx_codec_cx_pkt_t q_pkt = *pkt;
-
-									if(copy_buffers)
-									{
-										q_pkt.data.frame.buf = malloc(q_pkt.data.frame.sz);
-										if(q_pkt.data.frame.buf == NULL)
-											throw exportReturn_ErrMemory;
-										memcpy(q_pkt.data.frame.buf, pkt->data.frame.buf, q_pkt.data.frame.sz);
-									}
-
-									encoder_queue.push(q_pkt);
-								}
-							}
-							
-							assert(pkt->kind != VPX_CODEC_FPMB_STATS_PKT); // don't know what to do with this
-
-							if(!copy_buffers)
-								break;
-						}
-						
-						if(use_alpha)
-						{
-							assert(copy_buffers);
-
-							while(const vpx_codec_cx_pkt_t *pkt = vpx_codec_get_cx_data(&alpha_encoder, &alpha_encoder_iter))
+							while(const vpx_codec_cx_pkt_t *pkt = vpx_codec_get_cx_data(&vpx_encoder, &vpx_encoder_iter))
 							{
 								if(vbr_pass)
 								{
 									if(pkt->kind == VPX_CODEC_STATS_PKT)
 									{
 										vpx_codec_cx_pkt_t q_pkt = *pkt;
-										q_pkt.data.twopass_stats.buf = malloc(q_pkt.data.twopass_stats.sz);
-										if(q_pkt.data.twopass_stats.buf == NULL)
-											throw exportReturn_ErrMemory;
-										memcpy(q_pkt.data.twopass_stats.buf, pkt->data.twopass_stats.buf, q_pkt.data.twopass_stats.sz);
-										alpha_encoder_queue.push(q_pkt);
+
+										if(copy_buffers)
+										{
+											q_pkt.data.twopass_stats.buf = malloc(q_pkt.data.twopass_stats.sz);
+											if(q_pkt.data.twopass_stats.buf == NULL)
+												throw exportReturn_ErrMemory;
+											memcpy(q_pkt.data.twopass_stats.buf, pkt->data.twopass_stats.buf, q_pkt.data.twopass_stats.sz);
+										}
+
+										vpx_encoder_queue.push(q_pkt);
 									}
 								}
 								else
@@ -2075,141 +2233,389 @@ exSDKExport(
 									if(pkt->kind == VPX_CODEC_CX_FRAME_PKT)
 									{
 										vpx_codec_cx_pkt_t q_pkt = *pkt;
-										q_pkt.data.frame.buf = malloc(q_pkt.data.frame.sz);
-										if(q_pkt.data.frame.buf == NULL)
-											throw exportReturn_ErrMemory;
-										memcpy(q_pkt.data.frame.buf, pkt->data.frame.buf, q_pkt.data.frame.sz);
-										alpha_encoder_queue.push(q_pkt);
+
+										if(copy_buffers)
+										{
+											q_pkt.data.frame.buf = malloc(q_pkt.data.frame.sz);
+											if(q_pkt.data.frame.buf == NULL)
+												throw exportReturn_ErrMemory;
+											memcpy(q_pkt.data.frame.buf, pkt->data.frame.buf, q_pkt.data.frame.sz);
+										}
+
+										vpx_encoder_queue.push(q_pkt);
 									}
 								}
 								
 								assert(pkt->kind != VPX_CODEC_FPMB_STATS_PKT); // don't know what to do with this
-							}
-						}
-						
-						if(!encoder_queue.empty() && (!use_alpha || !alpha_encoder_queue.empty()))
-						{
-							vpx_codec_cx_pkt_t *pkt = NULL;
-							vpx_codec_cx_pkt_t *alpha_pkt = NULL;
-						
-							vpx_codec_cx_pkt_t pkt_data;
-							vpx_codec_cx_pkt_t alpha_pkt_data;
-							
-							pkt_data = encoder_queue.front();
-							pkt = &pkt_data;
-							
-							if(use_alpha)
-							{
-								alpha_pkt_data = alpha_encoder_queue.front();
-								alpha_pkt = &alpha_pkt_data;
-							}
-						
-							if(pkt->kind == VPX_CODEC_STATS_PKT)
-							{
-								assert(vbr_pass);
-							
-								if(vbr_buffer_size == 0)
-									vbr_buffer = memorySuite->NewPtr(pkt->data.twopass_stats.sz);
-								else
-									memorySuite->SetPtrSize(&vbr_buffer, vbr_buffer_size + pkt->data.twopass_stats.sz);
-								
-								memcpy(&vbr_buffer[vbr_buffer_size], pkt->data.twopass_stats.buf, pkt->data.twopass_stats.sz);
-								
-								vbr_buffer_size += pkt->data.twopass_stats.sz;
-								
-								made_frame = true;
-								
-								if(use_alpha)
-								{
-									assert(alpha_pkt->kind == VPX_CODEC_STATS_PKT);
-									
-									if(alpha_vbr_buffer_size == 0)
-										alpha_vbr_buffer = memorySuite->NewPtr(alpha_pkt->data.twopass_stats.sz);
-									else
-										memorySuite->SetPtrSize(&alpha_vbr_buffer, alpha_vbr_buffer_size + alpha_pkt->data.twopass_stats.sz);
-									
-									memcpy(&alpha_vbr_buffer[alpha_vbr_buffer_size], alpha_pkt->data.twopass_stats.buf, alpha_pkt->data.twopass_stats.sz);
-									
-									alpha_vbr_buffer_size += alpha_pkt->data.twopass_stats.sz;
-								}
-							}
-							else if(pkt->kind == VPX_CODEC_CX_FRAME_PKT)
-							{
-								assert( !vbr_pass );
-								assert( !(pkt->data.frame.flags & VPX_FRAME_IS_INVISIBLE) ); // libwebm not handling these now
-								assert( !(pkt->data.frame.flags & VPX_FRAME_IS_FRAGMENT) );
-								assert( pkt->data.frame.pts == (videoTime - exportInfoP->startTime) * fps.numerator / (ticksPerSecond * fps.denominator) );
-								assert( pkt->data.frame.duration == 1 ); // because of how we did the timescale
-							
-								if(use_alpha)
-								{
-									assert( !(alpha_pkt->data.frame.flags & VPX_FRAME_IS_INVISIBLE) );
-									assert( !(alpha_pkt->data.frame.flags & VPX_FRAME_IS_FRAGMENT) );
-									assert( alpha_pkt->data.frame.pts == (videoTime - exportInfoP->startTime) * fps.numerator / (ticksPerSecond * fps.denominator) );
-									assert( alpha_pkt->data.frame.duration == 1 );
-									
-									assert(alpha_pkt->kind == VPX_CODEC_CX_FRAME_PKT);
-									
-									if(pkt->data.frame.flags & VPX_FRAME_IS_KEY)
-										assert(alpha_pkt->data.frame.flags & VPX_FRAME_IS_KEY);
-									
-									bool added = muxer_segment->AddFrameWithAdditional((const uint8_t *)pkt->data.frame.buf, pkt->data.frame.sz,
-																						(const uint8_t *)alpha_pkt->data.frame.buf, alpha_pkt->data.frame.sz, alpha_id,
-																						vid_track, timeStamp,
-																						pkt->data.frame.flags & VPX_FRAME_IS_KEY);
-																		
-									if( !(pkt->data.frame.flags & VPX_FRAME_IS_INVISIBLE) )
-										made_frame = true;
-									
-									if(!added)
-										result = exportReturn_InternalError;
-								}
-								else
-								{
-									bool added = muxer_segment->AddFrame((const uint8_t *)pkt->data.frame.buf, pkt->data.frame.sz,
-																		vid_track, timeStamp,
-																		pkt->data.frame.flags & VPX_FRAME_IS_KEY);
-																		
-									if( !(pkt->data.frame.flags & VPX_FRAME_IS_INVISIBLE) )
-										made_frame = true;
-									
-									if(!added)
-										result = exportReturn_InternalError;
-								}
-							}
-							
-							if(copy_buffers)
-								free(vbr_pass ? pkt_data.data.twopass_stats.buf : pkt_data.data.frame.buf);
 
-							encoder_queue.pop();
-							
-							if(use_alpha)
-							{
-								assert(copy_buffers);
-								free(vbr_pass ? alpha_pkt_data.data.twopass_stats.buf : alpha_pkt_data.data.frame.buf);
-								alpha_encoder_queue.pop();
+								if(!copy_buffers)
+									break;
 							}
 						}
+						else
+						{
+							assert(video_codec == WEBM_CODEC_AV1);
+							
+							while(const aom_codec_cx_pkt_t *pkt = aom_codec_get_cx_data(&aom_encoder, &aom_encoder_iter))
+							{
+								if(vbr_pass)
+								{
+									if(pkt->kind == AOM_CODEC_STATS_PKT)
+									{
+										aom_codec_cx_pkt_t q_pkt = *pkt;
+
+										if(copy_buffers)
+										{
+											q_pkt.data.twopass_stats.buf = malloc(q_pkt.data.twopass_stats.sz);
+											if(q_pkt.data.twopass_stats.buf == NULL)
+												throw exportReturn_ErrMemory;
+											memcpy(q_pkt.data.twopass_stats.buf, pkt->data.twopass_stats.buf, q_pkt.data.twopass_stats.sz);
+										}
+
+										aom_encoder_queue.push(q_pkt);
+									}
+								}
+								else
+								{
+									if(pkt->kind == AOM_CODEC_CX_FRAME_PKT)
+									{
+										aom_codec_cx_pkt_t q_pkt = *pkt;
+
+										if(copy_buffers)
+										{
+											q_pkt.data.frame.buf = malloc(q_pkt.data.frame.sz);
+											if(q_pkt.data.frame.buf == NULL)
+												throw exportReturn_ErrMemory;
+											memcpy(q_pkt.data.frame.buf, pkt->data.frame.buf, q_pkt.data.frame.sz);
+										}
+
+										aom_encoder_queue.push(q_pkt);
+									}
+								}
+								
+								assert(pkt->kind != VPX_CODEC_FPMB_STATS_PKT); // don't know what to do with this
+
+								if(!copy_buffers)
+									break;
+							}
+						}
+						
+						if(use_alpha)
+						{
+							assert(copy_buffers);
+							
+							if(video_codec == WEBM_CODEC_VP8 || video_codec == WEBM_CODEC_VP9)
+							{
+								while(const vpx_codec_cx_pkt_t *pkt = vpx_codec_get_cx_data(&vpx_alpha_encoder, &vpx_alpha_encoder_iter))
+								{
+									if(vbr_pass)
+									{
+										if(pkt->kind == VPX_CODEC_STATS_PKT)
+										{
+											vpx_codec_cx_pkt_t q_pkt = *pkt;
+											q_pkt.data.twopass_stats.buf = malloc(q_pkt.data.twopass_stats.sz);
+											if(q_pkt.data.twopass_stats.buf == NULL)
+												throw exportReturn_ErrMemory;
+											memcpy(q_pkt.data.twopass_stats.buf, pkt->data.twopass_stats.buf, q_pkt.data.twopass_stats.sz);
+											vpx_alpha_encoder_queue.push(q_pkt);
+										}
+									}
+									else
+									{
+										if(pkt->kind == VPX_CODEC_CX_FRAME_PKT)
+										{
+											vpx_codec_cx_pkt_t q_pkt = *pkt;
+											q_pkt.data.frame.buf = malloc(q_pkt.data.frame.sz);
+											if(q_pkt.data.frame.buf == NULL)
+												throw exportReturn_ErrMemory;
+											memcpy(q_pkt.data.frame.buf, pkt->data.frame.buf, q_pkt.data.frame.sz);
+											vpx_alpha_encoder_queue.push(q_pkt);
+										}
+									}
+									
+									assert(pkt->kind != VPX_CODEC_FPMB_STATS_PKT); // don't know what to do with this
+								}
+							}
+							else
+							{
+								assert(video_codec == WEBM_CODEC_AV1);
+								
+								while(const aom_codec_cx_pkt_t *pkt = aom_codec_get_cx_data(&aom_alpha_encoder, &aom_alpha_encoder_iter))
+								{
+									if(vbr_pass)
+									{
+										if(pkt->kind == AOM_CODEC_STATS_PKT)
+										{
+											aom_codec_cx_pkt_t q_pkt = *pkt;
+											q_pkt.data.twopass_stats.buf = malloc(q_pkt.data.twopass_stats.sz);
+											if(q_pkt.data.twopass_stats.buf == NULL)
+												throw exportReturn_ErrMemory;
+											memcpy(q_pkt.data.twopass_stats.buf, pkt->data.twopass_stats.buf, q_pkt.data.twopass_stats.sz);
+											aom_alpha_encoder_queue.push(q_pkt);
+										}
+									}
+									else
+									{
+										if(pkt->kind == AOM_CODEC_CX_FRAME_PKT)
+										{
+											aom_codec_cx_pkt_t q_pkt = *pkt;
+											q_pkt.data.frame.buf = malloc(q_pkt.data.frame.sz);
+											if(q_pkt.data.frame.buf == NULL)
+												throw exportReturn_ErrMemory;
+											memcpy(q_pkt.data.frame.buf, pkt->data.frame.buf, q_pkt.data.frame.sz);
+											aom_alpha_encoder_queue.push(q_pkt);
+										}
+									}
+									
+									assert(pkt->kind != AOM_CODEC_FPMB_STATS_PKT); // don't know what to do with this
+								}
+							}
+						}
+						
+						if(video_codec == WEBM_CODEC_VP8 || video_codec == WEBM_CODEC_VP9)
+						{
+							if(!vpx_encoder_queue.empty() && (!use_alpha || !vpx_alpha_encoder_queue.empty()))
+							{
+								vpx_codec_cx_pkt_t *pkt = NULL;
+								vpx_codec_cx_pkt_t *alpha_pkt = NULL;
+							
+								vpx_codec_cx_pkt_t pkt_data;
+								vpx_codec_cx_pkt_t alpha_pkt_data;
+								
+								pkt_data = vpx_encoder_queue.front();
+								pkt = &pkt_data;
+								
+								if(use_alpha)
+								{
+									alpha_pkt_data = vpx_alpha_encoder_queue.front();
+									alpha_pkt = &alpha_pkt_data;
+								}
+							
+								if(pkt->kind == VPX_CODEC_STATS_PKT)
+								{
+									assert(vbr_pass);
+								
+									if(vbr_buffer_size == 0)
+										vbr_buffer = memorySuite->NewPtr(pkt->data.twopass_stats.sz);
+									else
+										memorySuite->SetPtrSize(&vbr_buffer, vbr_buffer_size + pkt->data.twopass_stats.sz);
+									
+									memcpy(&vbr_buffer[vbr_buffer_size], pkt->data.twopass_stats.buf, pkt->data.twopass_stats.sz);
+									
+									vbr_buffer_size += pkt->data.twopass_stats.sz;
+									
+									made_frame = true;
+									
+									if(use_alpha)
+									{
+										assert(alpha_pkt->kind == VPX_CODEC_STATS_PKT);
+										
+										if(alpha_vbr_buffer_size == 0)
+											alpha_vbr_buffer = memorySuite->NewPtr(alpha_pkt->data.twopass_stats.sz);
+										else
+											memorySuite->SetPtrSize(&alpha_vbr_buffer, alpha_vbr_buffer_size + alpha_pkt->data.twopass_stats.sz);
+										
+										memcpy(&alpha_vbr_buffer[alpha_vbr_buffer_size], alpha_pkt->data.twopass_stats.buf, alpha_pkt->data.twopass_stats.sz);
+										
+										alpha_vbr_buffer_size += alpha_pkt->data.twopass_stats.sz;
+									}
+								}
+								else if(pkt->kind == VPX_CODEC_CX_FRAME_PKT)
+								{
+									assert( !vbr_pass );
+									assert( !(pkt->data.frame.flags & VPX_FRAME_IS_INVISIBLE) ); // libwebm not handling these now
+									assert( !(pkt->data.frame.flags & VPX_FRAME_IS_FRAGMENT) );
+									assert( pkt->data.frame.pts == (videoTime - exportInfoP->startTime) * fps.numerator / (ticksPerSecond * fps.denominator) );
+									assert( pkt->data.frame.duration == 1 ); // because of how we did the timescale
+								
+									if(use_alpha)
+									{
+										assert( !(alpha_pkt->data.frame.flags & VPX_FRAME_IS_INVISIBLE) );
+										assert( !(alpha_pkt->data.frame.flags & VPX_FRAME_IS_FRAGMENT) );
+										assert( alpha_pkt->data.frame.pts == (videoTime - exportInfoP->startTime) * fps.numerator / (ticksPerSecond * fps.denominator) );
+										assert( alpha_pkt->data.frame.duration == 1 );
+										
+										assert(alpha_pkt->kind == VPX_CODEC_CX_FRAME_PKT);
+										
+										if(pkt->data.frame.flags & VPX_FRAME_IS_KEY)
+											assert(alpha_pkt->data.frame.flags & VPX_FRAME_IS_KEY);
+										
+										bool added = muxer_segment->AddFrameWithAdditional((const uint8_t *)pkt->data.frame.buf, pkt->data.frame.sz,
+																							(const uint8_t *)alpha_pkt->data.frame.buf, alpha_pkt->data.frame.sz, alpha_id,
+																							vid_track, timeStamp,
+																							pkt->data.frame.flags & VPX_FRAME_IS_KEY);
+																			
+										if( !(pkt->data.frame.flags & VPX_FRAME_IS_INVISIBLE) )
+											made_frame = true;
+										
+										if(!added)
+											result = exportReturn_InternalError;
+									}
+									else
+									{
+										bool added = muxer_segment->AddFrame((const uint8_t *)pkt->data.frame.buf, pkt->data.frame.sz,
+																			vid_track, timeStamp,
+																			pkt->data.frame.flags & VPX_FRAME_IS_KEY);
+																			
+										if( !(pkt->data.frame.flags & VPX_FRAME_IS_INVISIBLE) )
+											made_frame = true;
+										
+										if(!added)
+											result = exportReturn_InternalError;
+									}
+								}
+								
+								if(copy_buffers)
+									free(vbr_pass ? pkt_data.data.twopass_stats.buf : pkt_data.data.frame.buf);
+
+								vpx_encoder_queue.pop();
+								
+								if(use_alpha)
+								{
+									assert(copy_buffers);
+									free(vbr_pass ? alpha_pkt_data.data.twopass_stats.buf : alpha_pkt_data.data.frame.buf);
+									vpx_alpha_encoder_queue.pop();
+								}
+							}
+						}
+						else
+						{
+							assert(video_codec == WEBM_CODEC_AV1);
+							
+							if(!aom_encoder_queue.empty() && (!use_alpha || !aom_alpha_encoder_queue.empty()))
+							{
+								aom_codec_cx_pkt_t *pkt = NULL;
+								aom_codec_cx_pkt_t *alpha_pkt = NULL;
+							
+								aom_codec_cx_pkt_t pkt_data;
+								aom_codec_cx_pkt_t alpha_pkt_data;
+								
+								pkt_data = aom_encoder_queue.front();
+								pkt = &pkt_data;
+								
+								if(use_alpha)
+								{
+									alpha_pkt_data = aom_alpha_encoder_queue.front();
+									alpha_pkt = &alpha_pkt_data;
+								}
+							
+								if(pkt->kind == AOM_CODEC_STATS_PKT)
+								{
+									assert(vbr_pass);
+								
+									if(vbr_buffer_size == 0)
+										vbr_buffer = memorySuite->NewPtr(pkt->data.twopass_stats.sz);
+									else
+										memorySuite->SetPtrSize(&vbr_buffer, vbr_buffer_size + pkt->data.twopass_stats.sz);
+									
+									memcpy(&vbr_buffer[vbr_buffer_size], pkt->data.twopass_stats.buf, pkt->data.twopass_stats.sz);
+									
+									vbr_buffer_size += pkt->data.twopass_stats.sz;
+									
+									made_frame = true;
+									
+									if(use_alpha)
+									{
+										assert(alpha_pkt->kind == AOM_CODEC_STATS_PKT);
+										
+										if(alpha_vbr_buffer_size == 0)
+											alpha_vbr_buffer = memorySuite->NewPtr(alpha_pkt->data.twopass_stats.sz);
+										else
+											memorySuite->SetPtrSize(&alpha_vbr_buffer, alpha_vbr_buffer_size + alpha_pkt->data.twopass_stats.sz);
+										
+										memcpy(&alpha_vbr_buffer[alpha_vbr_buffer_size], alpha_pkt->data.twopass_stats.buf, alpha_pkt->data.twopass_stats.sz);
+										
+										alpha_vbr_buffer_size += alpha_pkt->data.twopass_stats.sz;
+									}
+								}
+								else if(pkt->kind == AOM_CODEC_CX_FRAME_PKT)
+								{
+									assert( !vbr_pass );
+									assert( pkt->data.frame.pts == (videoTime - exportInfoP->startTime) * fps.numerator / (ticksPerSecond * fps.denominator) );
+									assert( pkt->data.frame.duration == 1 ); // because of how we did the timescale
+								
+									if(use_alpha)
+									{
+										assert( alpha_pkt->data.frame.pts == (videoTime - exportInfoP->startTime) * fps.numerator / (ticksPerSecond * fps.denominator) );
+										assert( alpha_pkt->data.frame.duration == 1 );
+										
+										assert(alpha_pkt->kind == AOM_CODEC_CX_FRAME_PKT);
+										
+										if(pkt->data.frame.flags & AOM_FRAME_IS_KEY)
+											assert(alpha_pkt->data.frame.flags & AOM_FRAME_IS_KEY);
+										
+										bool added = muxer_segment->AddFrameWithAdditional((const uint8_t *)pkt->data.frame.buf, pkt->data.frame.sz,
+																							(const uint8_t *)alpha_pkt->data.frame.buf, alpha_pkt->data.frame.sz, alpha_id,
+																							vid_track, timeStamp,
+																							pkt->data.frame.flags & AOM_FRAME_IS_KEY);
+																			
+										made_frame = true;
+										
+										if(!added)
+											result = exportReturn_InternalError;
+									}
+									else
+									{
+										bool added = muxer_segment->AddFrame((const uint8_t *)pkt->data.frame.buf, pkt->data.frame.sz,
+																			vid_track, timeStamp,
+																			pkt->data.frame.flags & AOM_FRAME_IS_KEY);
+																			
+										made_frame = true;
+										
+										if(!added)
+											result = exportReturn_InternalError;
+									}
+								}
+								
+								if(copy_buffers)
+									free(vbr_pass ? pkt_data.data.twopass_stats.buf : pkt_data.data.frame.buf);
+
+								aom_encoder_queue.pop();
+								
+								if(use_alpha)
+								{
+									assert(copy_buffers);
+									free(vbr_pass ? alpha_pkt_data.data.twopass_stats.buf : alpha_pkt_data.data.frame.buf);
+									aom_alpha_encoder_queue.pop();
+								}
+							}
+						}
+						
+						
+						bool encode_more = !made_frame;
 						
 						if(vbr_pass)
 						{
 							// if that was the last VBR packet, we have to finalize and write a summary packet,
 							// so go through the loop once more
-							if(videoEncoderTime >= exportInfoP->endTime)
-							{
-								made_frame = false;
-								
-								assert(encoder_queue.empty());
-								assert(alpha_encoder_queue.empty());
-							}
-							
-							// the final packet was just written, so break
+							// but only call the encoder with NULL once during VBR pass
 							if(videoEncoderTime == LONG_LONG_MAX)
-								break;
+								encode_more = false;
+							
+							if(videoTime >= (exportInfoP->endTime - frameRateP.value.timeValue) && (videoEncoderTime >= exportInfoP->endTime) && !summary_packet_written)
+							{
+								assert(made_frame == true); // encode_more = false
+								
+								made_frame = false; // to trick the loop into going around once more
+								
+								summary_packet_written = true; // it will be
+								
+								if(video_codec == WEBM_CODEC_VP8 || video_codec == WEBM_CODEC_VP9)
+								{
+									assert(vpx_encoder_queue.empty());
+									assert(vpx_alpha_encoder_queue.empty());
+								}
+								else
+								{
+									assert(video_codec == WEBM_CODEC_AV1);
+									
+									assert(aom_encoder_queue.empty());
+									assert(aom_alpha_encoder_queue.empty());
+								}
+							}
 						}
 						
-						
-						if(!made_frame && result == suiteError_NoError)
+						if(encode_more && result == suiteError_NoError)
 						{
 							// this is for the encoder, which does its own math based on config.g_timebase
 							// let's do the math
@@ -2263,76 +2669,151 @@ exSDKExport(
 									assert(parN == pixelAspectRatioP.value.ratioValue.numerator);  // Premiere sometimes screws this up
 									assert(parD == pixelAspectRatioP.value.ratioValue.denominator);
 									
-									
-									// see validate_img() and validate_config() in vp8_cx_iface.c and vp9_cx_iface.c
-									const vpx_img_fmt_t imgfmt8 = chroma == WEBM_444 ? VPX_IMG_FMT_I444 :
-																	chroma == WEBM_422 ? VPX_IMG_FMT_I422 :
-																	VPX_IMG_FMT_I420;
-																	
-									const vpx_img_fmt_t imgfmt16 = chroma == WEBM_444 ? VPX_IMG_FMT_I44416 :
-																	chroma == WEBM_422 ? VPX_IMG_FMT_I42216 :
-																	VPX_IMG_FMT_I42016;
-																	
-									const vpx_img_fmt_t imgfmt = (bit_depth > 8 ? imgfmt16 : imgfmt8);
-									
-											
-									vpx_image_t img_data;
-									vpx_image_t *img = vpx_img_alloc(&img_data, imgfmt, width, height, 32);
-									
-									vpx_image_t alpha_img_data;
-									vpx_image_t *alpha_img = NULL;
-									
-									if(use_alpha)
-										alpha_img = vpx_img_alloc(&alpha_img_data, imgfmt, width, height, 32);
-									
-									
-									if(img && (!use_alpha || alpha_img))
+									if(video_codec == WEBM_CODEC_VP8 || video_codec == WEBM_CODEC_VP9)
 									{
-										if(bit_depth > 8)
-										{
-											img->bit_depth = bit_depth;
-											img->bps = img->bps * bit_depth / 16;
-											
-											if(use_alpha)
-											{
-												alpha_img->bit_depth = bit_depth;
-												alpha_img->bps = alpha_img->bps * bit_depth / 16;
-											}
-										}
-									
-										CopyPixToImg(img, alpha_img, renderResult.outFrame, pixSuite, pix2Suite);
+										// see validate_img() and validate_config() in vp8_cx_iface.c and vp9_cx_iface.c
+										const vpx_img_fmt_t imgfmt8 = chroma == WEBM_444 ? VPX_IMG_FMT_I444 :
+																		chroma == WEBM_422 ? VPX_IMG_FMT_I422 :
+																		VPX_IMG_FMT_I420;
+																		
+										const vpx_img_fmt_t imgfmt16 = chroma == WEBM_444 ? VPX_IMG_FMT_I44416 :
+																		chroma == WEBM_422 ? VPX_IMG_FMT_I42216 :
+																		VPX_IMG_FMT_I42016;
+																		
+										const vpx_img_fmt_t imgfmt = (bit_depth > 8 ? imgfmt16 : imgfmt8);
 										
+												
+										vpx_image_t img_data;
+										vpx_image_t *img = vpx_img_alloc(&img_data, imgfmt, width, height, 32);
 										
-										vpx_codec_err_t encode_err = vpx_codec_encode(&encoder, img, encoder_FrameNumber, encoder_FrameDuration, 0, deadline);
-										
-										if(encode_err == VPX_CODEC_OK)
-										{
-											videoEncoderTime += frameRateP.value.timeValue;
-											
-											encoder_iter = NULL;
-										}
-										else
-											result = exportReturn_InternalError;
-										
-										vpx_img_free(img);
-										
+										vpx_image_t alpha_img_data;
+										vpx_image_t *alpha_img = NULL;
 										
 										if(use_alpha)
+											alpha_img = vpx_img_alloc(&alpha_img_data, imgfmt, width, height, 32);
+										
+										
+										if(img && (!use_alpha || alpha_img))
 										{
-											vpx_codec_err_t alpha_encode_err = vpx_codec_encode(&alpha_encoder, alpha_img, encoder_FrameNumber, encoder_FrameDuration, 0, deadline);
-											
-											if(alpha_encode_err == VPX_CODEC_OK)
+											if(bit_depth > 8)
 											{
-												alpha_encoder_iter = NULL;
+												img->bit_depth = bit_depth;
+												img->bps = img->bps * bit_depth / 16;
+												
+												if(use_alpha)
+												{
+													alpha_img->bit_depth = bit_depth;
+													alpha_img->bps = alpha_img->bps * bit_depth / 16;
+												}
+											}
+										
+											CopyPixToVPXImg(img, alpha_img, renderResult.outFrame, pixSuite, pix2Suite);
+											
+											
+											vpx_codec_err_t encode_err = vpx_codec_encode(&vpx_encoder, img, encoder_FrameNumber, encoder_FrameDuration, 0, vpx_deadline);
+											
+											if(encode_err == VPX_CODEC_OK)
+											{
+												videoEncoderTime += frameRateP.value.timeValue;
+												
+												vpx_encoder_iter = NULL;
 											}
 											else
 												result = exportReturn_InternalError;
 											
-											vpx_img_free(alpha_img);
+											vpx_img_free(img);
+											
+											
+											if(use_alpha)
+											{
+												vpx_codec_err_t alpha_encode_err = vpx_codec_encode(&vpx_alpha_encoder, alpha_img, encoder_FrameNumber, encoder_FrameDuration, 0, vpx_deadline);
+												
+												if(alpha_encode_err == VPX_CODEC_OK)
+												{
+													vpx_alpha_encoder_iter = NULL;
+												}
+												else
+													result = exportReturn_InternalError;
+												
+												vpx_img_free(alpha_img);
+											}
 										}
+										else
+											result = exportReturn_ErrMemory;
 									}
 									else
-										result = exportReturn_ErrMemory;
+									{
+										assert(video_codec == WEBM_CODEC_AV1);
+										
+										const aom_img_fmt_t imgfmt8 = chroma == WEBM_444 ? AOM_IMG_FMT_I444 :
+																		chroma == WEBM_422 ? AOM_IMG_FMT_I422 :
+																		AOM_IMG_FMT_I420;
+																		
+										const aom_img_fmt_t imgfmt16 = chroma == WEBM_444 ? AOM_IMG_FMT_I44416 :
+																		chroma == WEBM_422 ? AOM_IMG_FMT_I42216 :
+																		AOM_IMG_FMT_I42016;
+																		
+										const aom_img_fmt_t imgfmt = (bit_depth > 8 ? imgfmt16 : imgfmt8);
+										
+												
+										aom_image_t img_data;
+										aom_image_t *img = aom_img_alloc(&img_data, imgfmt, width, height, 32);
+										
+										aom_image_t alpha_img_data;
+										aom_image_t *alpha_img = NULL;
+										
+										if(use_alpha)
+											alpha_img = aom_img_alloc(&alpha_img_data, imgfmt, width, height, 32);
+										
+										
+										if(img && (!use_alpha || alpha_img))
+										{
+											if(bit_depth > 8)
+											{
+												img->bit_depth = bit_depth;
+												img->bps = img->bps * bit_depth / 16;
+												
+												if(use_alpha)
+												{
+													alpha_img->bit_depth = bit_depth;
+													alpha_img->bps = alpha_img->bps * bit_depth / 16;
+												}
+											}
+										
+											CopyPixToAOMImg(img, alpha_img, renderResult.outFrame, pixSuite, pix2Suite);
+											
+											
+											aom_codec_err_t encode_err = aom_codec_encode(&aom_encoder, img, encoder_FrameNumber, encoder_FrameDuration, 0);
+											
+											if(encode_err == AOM_CODEC_OK)
+											{
+												videoEncoderTime += frameRateP.value.timeValue;
+												
+												aom_encoder_iter = NULL;
+											}
+											else
+												result = exportReturn_InternalError;
+											
+											aom_img_free(img);
+											
+											
+											if(use_alpha)
+											{
+												aom_codec_err_t alpha_encode_err = aom_codec_encode(&aom_alpha_encoder, alpha_img, encoder_FrameNumber, encoder_FrameDuration, 0);
+												
+												if(alpha_encode_err == AOM_CODEC_OK)
+												{
+													aom_alpha_encoder_iter = NULL;
+												}
+												else
+													result = exportReturn_InternalError;
+												
+												aom_img_free(alpha_img);
+											}
+										}
+										else
+											result = exportReturn_ErrMemory;
+									}
 									
 									
 									pixSuite->Dispose(renderResult.outFrame);
@@ -2341,28 +2822,59 @@ exSDKExport(
 							else
 							{
 								// squeeze the last bit out of the encoder
-								vpx_codec_err_t encode_err = vpx_codec_encode(&encoder, NULL, encoder_FrameNumber, encoder_FrameDuration, 0, deadline);
-								
-								if(encode_err == VPX_CODEC_OK)
+								if(video_codec == WEBM_CODEC_VP8 || video_codec == WEBM_CODEC_VP9)
 								{
-									videoEncoderTime = LONG_LONG_MAX;
+									vpx_codec_err_t encode_err = vpx_codec_encode(&vpx_encoder, NULL, encoder_FrameNumber, encoder_FrameDuration, 0, vpx_deadline);
 									
-									encoder_iter = NULL;
-								}
-								else
-									result = exportReturn_InternalError;
-								
-								
-								if(use_alpha)
-								{
-									vpx_codec_err_t alpha_encode_err = vpx_codec_encode(&alpha_encoder, NULL, encoder_FrameNumber, encoder_FrameDuration, 0, deadline);
-									
-									if(alpha_encode_err == VPX_CODEC_OK)
+									if(encode_err == VPX_CODEC_OK)
 									{
-										alpha_encoder_iter = NULL;
+										videoEncoderTime = LONG_LONG_MAX;
+										
+										vpx_encoder_iter = NULL;
 									}
 									else
 										result = exportReturn_InternalError;
+									
+									
+									if(use_alpha)
+									{
+										vpx_codec_err_t alpha_encode_err = vpx_codec_encode(&vpx_alpha_encoder, NULL, encoder_FrameNumber, encoder_FrameDuration, 0, vpx_deadline);
+										
+										if(alpha_encode_err == VPX_CODEC_OK)
+										{
+											vpx_alpha_encoder_iter = NULL;
+										}
+										else
+											result = exportReturn_InternalError;
+									}
+								}
+								else
+								{
+									assert(video_codec == WEBM_CODEC_AV1);
+									
+									aom_codec_err_t encode_err = aom_codec_encode(&aom_encoder, NULL, encoder_FrameNumber, encoder_FrameDuration, 0);
+									
+									if(encode_err == AOM_CODEC_OK)
+									{
+										videoEncoderTime = LONG_LONG_MAX;
+										
+										aom_encoder_iter = NULL;
+									}
+									else
+										result = exportReturn_InternalError;
+									
+									
+									if(use_alpha)
+									{
+										aom_codec_err_t alpha_encode_err = aom_codec_encode(&aom_alpha_encoder, NULL, encoder_FrameNumber, encoder_FrameDuration, 0);
+										
+										if(alpha_encode_err == AOM_CODEC_OK)
+										{
+											aom_alpha_encoder_iter = NULL;
+										}
+										else
+											result = exportReturn_InternalError;
+									}
 								}
 							}
 						}
@@ -2376,7 +2888,7 @@ exSDKExport(
 					
 					if(passes == 2)
 					{
-						const float firstpass_frac = (use_vp9 ? 0.1f : 0.3f);
+						const float firstpass_frac = ((video_codec == WEBM_CODEC_VP8) ? 0.3f : 0.1f);
 					
 						if(pass == 1)
 						{
@@ -2419,7 +2931,7 @@ exSDKExport(
 			// audio sanity check
 			if(result == malNoError && exportInfoP->exportAudio && !vbr_pass)
 			{
-				if(audioCodecP.value.intValue == WEBM_CODEC_OPUS)
+				if(audio_codec == WEBM_CODEC_OPUS)
 					assert(currentAudioSample >= (endAudioSample + opus_pre_skip));
 				else
 					assert(op.granulepos == endAudioSample);
@@ -2432,25 +2944,47 @@ exSDKExport(
 
 		if(exportInfoP->exportVideo)
 		{
-			if(result == malNoError)
-				assert(NULL == vpx_codec_get_cx_data(&encoder, &encoder_iter) && encoder_queue.empty());
-		
-			vpx_codec_err_t destroy_err = vpx_codec_destroy(&encoder);
-			assert(destroy_err == VPX_CODEC_OK);
-			
-			if(use_alpha)
+			if(video_codec == WEBM_CODEC_VP8 || video_codec == WEBM_CODEC_VP9)
 			{
 				if(result == malNoError)
-					assert(NULL == vpx_codec_get_cx_data(&alpha_encoder, &alpha_encoder_iter) && alpha_encoder_queue.empty());
+					assert(NULL == vpx_codec_get_cx_data(&vpx_encoder, &vpx_encoder_iter) && vpx_encoder_queue.empty());
+			
+				vpx_codec_err_t destroy_err = vpx_codec_destroy(&vpx_encoder);
+				assert(destroy_err == VPX_CODEC_OK);
 				
-				vpx_codec_err_t alpha_destroy_err = vpx_codec_destroy(&alpha_encoder);
-				assert(alpha_destroy_err == VPX_CODEC_OK);
+				if(use_alpha)
+				{
+					if(result == malNoError)
+						assert(NULL == vpx_codec_get_cx_data(&vpx_alpha_encoder, &vpx_alpha_encoder_iter) && vpx_alpha_encoder_queue.empty());
+					
+					vpx_codec_err_t alpha_destroy_err = vpx_codec_destroy(&vpx_alpha_encoder);
+					assert(alpha_destroy_err == VPX_CODEC_OK);
+				}
+			}
+			else
+			{
+				assert(video_codec == WEBM_CODEC_AV1);
+				
+				if(result == malNoError)
+					assert(NULL == aom_codec_get_cx_data(&aom_encoder, &aom_encoder_iter) && aom_encoder_queue.empty());
+			
+				aom_codec_err_t destroy_err = aom_codec_destroy(&aom_encoder);
+				assert(destroy_err == AOM_CODEC_OK);
+				
+				if(use_alpha)
+				{
+					if(result == malNoError)
+						assert(NULL == aom_codec_get_cx_data(&aom_alpha_encoder, &aom_alpha_encoder_iter) && aom_alpha_encoder_queue.empty());
+					
+					aom_codec_err_t alpha_destroy_err = aom_codec_destroy(&aom_alpha_encoder);
+					assert(alpha_destroy_err == AOM_CODEC_OK);
+				}
 			}
 		}
 			
 		if(exportInfoP->exportAudio && !vbr_pass)
 		{
-			if(audioCodecP.value.intValue == WEBM_CODEC_OPUS)
+			if(audio_codec == WEBM_CODEC_OPUS)
 			{
 				if(opus)
 					opus_multistream_encoder_destroy(opus);

@@ -44,10 +44,12 @@
 #include "WebM_Premiere_Export.h"
 
 #include "vpx/vpx_encoder.h"
+#include "aom/aom_encoder.h"
 
 typedef enum {
 	WEBM_CODEC_VP8 = 0,
-	WEBM_CODEC_VP9
+	WEBM_CODEC_VP9,
+	WEBM_CODEC_AV1
 } WebM_Video_Codec;
 
 typedef enum {
@@ -130,9 +132,13 @@ exSDKValidateParamChanged (
 	exParamChangedRec	*validateParamChangedRecP);
 	
 
-bool ConfigureEncoderPre(vpx_codec_enc_cfg_t &config, unsigned long &deadline, const char *txt);
+bool ConfigureVPXEncoderPre(vpx_codec_enc_cfg_t &config, unsigned long &deadline, const char *txt);
 
-bool ConfigureEncoderPost(vpx_codec_ctx_t *encoder, const char *txt);
+bool ConfigureVPXEncoderPost(vpx_codec_ctx_t *encoder, const char *txt);
+
+bool ConfigureAOMEncoderPre(aom_codec_enc_cfg_t &config, const char *txt);
+
+bool ConfigureAOMEncoderPost(aom_codec_ctx_t *encoder, const char *txt);
 
 
 #endif // WEBM_PREMIERE_EXPORT_PARAMS_H

@@ -41,6 +41,7 @@
 
 
 #include "vpx/vp8cx.h"
+#include "aom/aomcx.h"
 
 #include <assert.h>
 #include <math.h>
@@ -369,7 +370,7 @@ exSDKGenerateDefaultParams(
 	exParamValues codecValues;
 	codecValues.structVersion = 1;
 	codecValues.rangeMin.intValue = WEBM_CODEC_VP8;
-	codecValues.rangeMax.intValue = WEBM_CODEC_VP9;
+	codecValues.rangeMax.intValue = WEBM_CODEC_AV1;
 	codecValues.value.intValue = WEBM_CODEC_VP9;
 	codecValues.disabled = kPrFalse;
 	codecValues.hidden = kPrFalse;
@@ -911,15 +912,19 @@ exSDKPostProcessParams(
 	
 	
 	WebM_Video_Codec codecs[] = {	WEBM_CODEC_VP8,
-									WEBM_CODEC_VP9 };
+									WEBM_CODEC_VP9,
+									WEBM_CODEC_AV1
+	};
 	
 	const char *codecStrings[]	= {	"VP8",
-									"VP9" };
+									"VP9",
+									"AV1"
+	};
 
 	exportParamSuite->ClearConstrainedValues(exID, gIdx, WebMVideoCodec);
 	
 	exOneParamValueRec tempCodec;
-	for(int i=0; i < 2; i++)
+	for(int i=0; i < 3; i++)
 	{
 		tempCodec.intValue = codecs[i];
 		utf16ncpy(paramString, codecStrings[i], 255);
@@ -1368,7 +1373,9 @@ exSDKGetParamSummary(
 			stream3 << " VBR";
 	}
 	
-	stream3 << (codecP.value.intValue == WEBM_CODEC_VP9 ? ", VP9" : ", VP8");
+	stream3 << (codecP.value.intValue == WEBM_CODEC_VP9 ? ", VP9" :
+				codecP.value.intValue == WEBM_CODEC_AV1 ? ", AV1" :
+				", VP8");
 	
 	if(twoPassP.value.intValue)
 		stream3 << " 2-pass";
@@ -1585,7 +1592,7 @@ static void SetValue(T &v, string s)
 
 
 bool
-ConfigureEncoderPre(vpx_codec_enc_cfg_t &config, unsigned long &deadline, const char *txt)
+ConfigureVPXEncoderPre(vpx_codec_enc_cfg_t &config, unsigned long &deadline, const char *txt)
 {
 	std::vector<string> args;
 	
@@ -1691,24 +1698,26 @@ ConfigureEncoderPre(vpx_codec_enc_cfg_t &config, unsigned long &deadline, const 
 }
 
 
-#define ConfigureValue(encoder, ctrl_id, s) \
+#define ConfigureVPXValue(encoder, ctrl_id, s) \
 	do{							\
 		std::stringstream ss;	\
 		ss << s;				\
-		int v = 0;		\
+		int v = 0;				\
 		ss >> v;				\
-		config_err = vpx_codec_control(encoder, ctrl_id, v); \
+		vpx_codec_err_t err = vpx_codec_control(encoder, ctrl_id, v); \
+		if(err != VPX_CODEC_OK)	\
+			config_err = err;	\
 	}while(0)
 
 bool
-ConfigureEncoderPost(vpx_codec_ctx_t *encoder, const char *txt)
+ConfigureVPXEncoderPost(vpx_codec_ctx_t *encoder, const char *txt)
 {
 	std::vector<string> args;
 	
-	vpx_codec_err_t config_err = VPX_CODEC_OK;
-	
 	if(quotedTokenize(txt, args, " =\t\r\n") && args.size() > 0)
 	{
+		vpx_codec_err_t config_err = VPX_CODEC_OK;
+		
 		const int num_args = args.size();
 
 		args.push_back(""); // so there's always an i+1
@@ -1721,37 +1730,37 @@ ConfigureEncoderPost(vpx_codec_ctx_t *encoder, const char *txt)
 			const string &val = args[i + 1];
 		
 			if(arg == "--noise-sensitivity")
-			{	ConfigureValue(encoder, VP8E_SET_NOISE_SENSITIVITY, val); i++;	}
+			{	ConfigureVPXValue(encoder, VP8E_SET_NOISE_SENSITIVITY, val); i++;	}
 
 			else if(arg == "--sharpness")
-			{	ConfigureValue(encoder, VP8E_SET_SHARPNESS, val); i++;	}
+			{	ConfigureVPXValue(encoder, VP8E_SET_SHARPNESS, val); i++;	}
 
 			else if(arg == "--static-thresh")
-			{	ConfigureValue(encoder, VP8E_SET_STATIC_THRESHOLD, val); i++;	}
+			{	ConfigureVPXValue(encoder, VP8E_SET_STATIC_THRESHOLD, val); i++;	}
 
 			else if(arg == "--cpu-used")
-			{	ConfigureValue(encoder, VP8E_SET_CPUUSED, val); i++;	}
+			{	ConfigureVPXValue(encoder, VP8E_SET_CPUUSED, val); i++;	}
 
 			else if(arg == "--token-parts")
-			{	ConfigureValue(encoder, VP8E_SET_TOKEN_PARTITIONS, val); i++;	}
+			{	ConfigureVPXValue(encoder, VP8E_SET_TOKEN_PARTITIONS, val); i++;	}
 
 			else if(arg == "--tile-columns")
-			{	ConfigureValue(encoder, VP9E_SET_TILE_COLUMNS, val); i++;	}
+			{	ConfigureVPXValue(encoder, VP9E_SET_TILE_COLUMNS, val); i++;	}
 
 			else if(arg == "--tile-rows")
-			{	ConfigureValue(encoder, VP9E_SET_TILE_ROWS, val); i++;	}
+			{	ConfigureVPXValue(encoder, VP9E_SET_TILE_ROWS, val); i++;	}
 			
 			else if(arg == "--auto-alt-ref")
-			{	ConfigureValue(encoder, VP8E_SET_ENABLEAUTOALTREF, val); i++;	}
+			{	ConfigureVPXValue(encoder, VP8E_SET_ENABLEAUTOALTREF, val); i++;	}
 
 			else if(arg == "--arnr-maxframes")
-			{	ConfigureValue(encoder, VP8E_SET_ARNR_MAXFRAMES, val); i++;	}
+			{	ConfigureVPXValue(encoder, VP8E_SET_ARNR_MAXFRAMES, val); i++;	}
 
 			else if(arg == "--arnr-strength")
-			{	ConfigureValue(encoder, VP8E_SET_ARNR_STRENGTH, val); i++;	}
+			{	ConfigureVPXValue(encoder, VP8E_SET_ARNR_STRENGTH, val); i++;	}
 
 			else if(arg == "--arnr-type")
-			{	ConfigureValue(encoder, VP8E_SET_ARNR_TYPE, val); i++;	}
+			{	ConfigureVPXValue(encoder, VP8E_SET_ARNR_TYPE, val); i++;	}
 
 			else if(arg == "--tune")
 			{
@@ -1759,36 +1768,36 @@ ConfigureEncoderPost(vpx_codec_ctx_t *encoder, const char *txt)
 									val == "ssim" ? VP8_TUNE_SSIM :
 									VP8_TUNE_PSNR;
 			
-				ConfigureValue(encoder, VP8E_SET_TUNING, ival);
+				ConfigureVPXValue(encoder, VP8E_SET_TUNING, ival);
 				i++;
 			}
 
 			else if(arg == "--cq-level")
-			{	ConfigureValue(encoder, VP8E_SET_CQ_LEVEL, val); i++;	}
+			{	ConfigureVPXValue(encoder, VP8E_SET_CQ_LEVEL, val); i++;	}
 			
 			else if(arg == "--max-intra-rate")
-			{	ConfigureValue(encoder, VP8E_SET_MAX_INTRA_BITRATE_PCT, val); i++;	}
+			{	ConfigureVPXValue(encoder, VP8E_SET_MAX_INTRA_BITRATE_PCT, val); i++;	}
 
 			else if(arg == "--gf-cbr-boost")
-			{	ConfigureValue(encoder, VP9E_SET_GF_CBR_BOOST_PCT, val); i++;	}
+			{	ConfigureVPXValue(encoder, VP9E_SET_GF_CBR_BOOST_PCT, val); i++;	}
 
 			else if(arg == "--screen-content-mode")
-			{	ConfigureValue(encoder, VP8E_SET_SCREEN_CONTENT_MODE, val);	i++;	}
+			{	ConfigureVPXValue(encoder, VP8E_SET_SCREEN_CONTENT_MODE, val);	i++;	}
 			
 			else if(arg == "--lossless")
-			{	ConfigureValue(encoder, VP9E_SET_LOSSLESS, 1);	}
+			{	ConfigureVPXValue(encoder, VP9E_SET_LOSSLESS, 1);	}
 			
 			else if(arg == "--frame-parallel")
-			{	ConfigureValue(encoder, VP9E_SET_FRAME_PARALLEL_DECODING, val);	i++;	}
+			{	ConfigureVPXValue(encoder, VP9E_SET_FRAME_PARALLEL_DECODING, val);	i++;	}
 
 			else if(arg == "--aq-mode")
-			{	ConfigureValue(encoder, VP9E_SET_AQ_MODE, val);	i++;	}
+			{	ConfigureVPXValue(encoder, VP9E_SET_AQ_MODE, val);	i++;	}
 
 			else if(arg == "--frame_boost")
-			{	ConfigureValue(encoder, VP9E_SET_FRAME_PERIODIC_BOOST, val); i++;	}
+			{	ConfigureVPXValue(encoder, VP9E_SET_FRAME_PERIODIC_BOOST, val); i++;	}
 
 			else if(arg == "--noise-sensitivity")
-			{	ConfigureValue(encoder, VP9E_SET_NOISE_SENSITIVITY, val); i++;	}
+			{	ConfigureVPXValue(encoder, VP9E_SET_NOISE_SENSITIVITY, val); i++;	}
 			
 			else if(arg == "--tune-content")
 			{
@@ -1797,7 +1806,7 @@ ConfigureEncoderPost(vpx_codec_ctx_t *encoder, const char *txt)
 									val == "film" ? VP9E_CONTENT_FILM :
 									VP9E_CONTENT_DEFAULT;
 			
-				ConfigureValue(encoder, VP9E_SET_TUNE_CONTENT, ival);
+				ConfigureVPXValue(encoder, VP9E_SET_TUNE_CONTENT, ival);
 				i++;
 			}
 
@@ -1809,25 +1818,24 @@ ConfigureEncoderPost(vpx_codec_ctx_t *encoder, const char *txt)
 									val == "smpte170" ? VPX_CS_SMPTE_170 :
 									val == "smpte240" ? VPX_CS_SMPTE_240 :
 									val == "bt2020" ? VPX_CS_BT_2020 :
-									val == "reserved" ? VPX_CS_RESERVED :
 									val == "sRGB" ? VPX_CS_SRGB :
 									VPX_CS_UNKNOWN;
 			
-				ConfigureValue(encoder, VP9E_SET_COLOR_SPACE, ival);
+				ConfigureVPXValue(encoder, VP9E_SET_COLOR_SPACE, ival);
 				i++;
 			}
 			
 			else if(arg == "--min-gf-interval")
-			{	ConfigureValue(encoder, VP9E_SET_MIN_GF_INTERVAL, val); i++;	}
+			{	ConfigureVPXValue(encoder, VP9E_SET_MIN_GF_INTERVAL, val); i++;	}
 			
 			else if(arg == "--max-gf-interval")
-			{	ConfigureValue(encoder, VP9E_SET_MAX_GF_INTERVAL, val); i++;	}
+			{	ConfigureVPXValue(encoder, VP9E_SET_MAX_GF_INTERVAL, val); i++;	}
 
 			else if(arg == "--target-level")
-			{	ConfigureValue(encoder, VP9E_SET_TARGET_LEVEL, val); i++;	}
+			{	ConfigureVPXValue(encoder, VP9E_SET_TARGET_LEVEL, val); i++;	}
 
 			else if(arg == "--row-mt")
-			{	ConfigureValue(encoder, VP9E_SET_ROW_MT, 1);	}
+			{	ConfigureVPXValue(encoder, VP9E_SET_ROW_MT, 1);	}
 
 			else if(arg == "--color-range")
 			{
@@ -1835,16 +1843,626 @@ ConfigureEncoderPost(vpx_codec_ctx_t *encoder, const char *txt)
 									val == "full" ? VPX_CR_FULL_RANGE :
 									VPX_CR_STUDIO_RANGE;
 			
-				ConfigureValue(encoder, VP9E_SET_COLOR_RANGE, ival);
+				ConfigureVPXValue(encoder, VP9E_SET_COLOR_RANGE, ival);
 				i++;
 			}
 
 			i++;	
 		}
 		
+		return (config_err == VPX_CODEC_OK);
+	}
+	else
+		return false;
+}
+
+
+bool
+ConfigureAOMEncoderPre(aom_codec_enc_cfg_t &config, const char *txt)
+{
+	std::vector<string> args;
+	
+	if(quotedTokenize(txt, args, " =\t\r\n") && args.size() > 0)
+	{
+		const int num_args = args.size();
+	
+		args.push_back(""); // so there's always an i+1
+		
+		int i = 0;
+		
+		while(i < num_args)
+		{
+			const string &arg = args[i];
+			const string &val = args[i + 1];
+			
+			if(arg == "-t" || arg == "--threads")
+			{	SetValue(config.g_threads, val); i++;	}
+			
+			else if(arg == "--global-error-resilient")
+			{	SetValue(config.g_error_resilient, val); i++;	}
+			
+			else if(arg == "--lag-in-frames")
+			{	SetValue(config.g_lag_in_frames, val); i++;	}
+			
+			else if(arg == "--drop-frame")
+			{	SetValue(config.rc_dropframe_thresh, val); i++;	}
+			
+			else if(arg == "--resize-mode")
+			{	SetValue(config.rc_resize_mode, val); i++;	}
+			
+			else if(arg == "--resize-denominator")
+			{	SetValue(config.rc_resize_denominator, val); i++;	}
+
+			else if(arg == "--superres-kf-denominator")
+			{	SetValue(config.rc_resize_kf_denominator, val); i++;	}
+
+			else if(arg == "--superres-mode")
+			{
+				const aom_superres_mode mode = val == "0" ? AOM_SUPERRES_NONE :
+												val == "1" ? AOM_SUPERRES_FIXED :
+												val == "2" ? AOM_SUPERRES_RANDOM :
+												val == "3" ? AOM_SUPERRES_QTHRESH :
+												val == "4" ? AOM_SUPERRES_AUTO :
+												AOM_SUPERRES_AUTO;
+				
+				config.rc_superres_mode = mode;
+				
+				i++;
+			}
+
+			else if(arg == "--superres-denominator")
+			{	SetValue(config.rc_superres_denominator, val); i++;	}
+
+			else if(arg == "--superres-kf-denominator")
+			{	SetValue(config.rc_superres_kf_denominator, val); i++;	}
+			
+			else if(arg == "--superres-qthresh")
+			{	SetValue(config.rc_superres_qthresh, val); i++;	}
+			
+			else if(arg == "--superres-kf-qthresh")
+			{	SetValue(config.rc_superres_kf_qthresh, val); i++;	}
+			
+			else if(arg == "--target-bitrate")
+			{	SetValue(config.rc_target_bitrate, val); i++;	}
+			
+			else if(arg == "--min-q")
+			{	SetValue(config.rc_min_quantizer, val); i++;	}
+			
+			else if(arg == "--max-q")
+			{	SetValue(config.rc_max_quantizer, val); i++;	}
+			
+			else if(arg == "--undershoot-pct")
+			{	SetValue(config.rc_undershoot_pct, val); i++;	}
+			
+			else if(arg == "--overshoot-pct")
+			{	SetValue(config.rc_overshoot_pct, val); i++;	}
+
+			else if(arg == "--buf-sz")
+			{	SetValue(config.rc_buf_sz, val); i++;	}
+
+			else if(arg == "--buf-initial-sz")
+			{	SetValue(config.rc_buf_initial_sz, val); i++;	}
+
+			else if(arg == "--buf-optimal-sz")
+			{	SetValue(config.rc_buf_optimal_sz, val); i++;	}
+
+			else if(arg == "--bias-pct")
+			{	SetValue(config.rc_2pass_vbr_bias_pct, val); i++;	}
+
+			else if(arg == "--minsection-pct")
+			{	SetValue(config.rc_2pass_vbr_minsection_pct, val); i++;	}
+
+			else if(arg == "--maxsection-pct")
+			{	SetValue(config.rc_2pass_vbr_maxsection_pct, val); i++;	}
+
+			else if(arg == "--enable-fwd-kf")
+			{	SetValue(config.fwd_kf_enabled, val); i++;	}
+
+			else if(arg == "--disable-kf")
+			{	config.kf_mode = AOM_KF_DISABLED;	}
+			
+			else if(arg == "--kf-min-dist")
+			{	SetValue(config.kf_min_dist, val); i++;	}
+
+			else if(arg == "--kf-max-dist")
+			{	SetValue(config.kf_max_dist, val); i++;	}
+
+			else if(arg == "--sframe-dist")
+			{	SetValue(config.sframe_dist, val); i++;	}
+
+			else if(arg == "--sframe-mode")
+			{	SetValue(config.sframe_mode, val); i++;	}
+			
+			else if(arg == "--large-scale-tile")
+			{	SetValue(config.large_scale_tile, val); i++;	}
+
+			else if(arg == "--annexb")
+			{	SetValue(config.save_as_annexb, val); i++;	}
+
+			else if(arg == "--use-fixed-qp-offsets")
+			{	SetValue(config.use_fixed_qp_offsets, val); i++;	}
+
+			i++;
+		}
+	
 		return true;
 	}
 	else
 		return false;
 }
 
+
+#define ConfigureAOMValue(encoder, ctrl_id, s) \
+	do{							\
+		std::stringstream ss;	\
+		ss << s;				\
+		int v = 0;				\
+		ss >> v;				\
+		aom_codec_err_t err = aom_codec_control(encoder, ctrl_id, v); \
+		if(err != AOM_CODEC_OK)	\
+			config_err = err;	\
+	}while(0)
+
+bool
+ConfigureAOMEncoderPost(aom_codec_ctx_t *encoder, const char *txt)
+{
+	std::vector<string> args;
+	
+	if(quotedTokenize(txt, args, " =\t\r\n") && args.size() > 0)
+	{
+		aom_codec_err_t config_err = AOM_CODEC_OK;
+		
+		const int num_args = args.size();
+
+		args.push_back(""); // so there's always an i+1
+		
+		int i = 0;
+		
+		while(i < num_args)
+		{
+			const string &arg = args[i];
+			const string &val = args[i + 1];
+		
+			if(arg == "--cpu-used")
+			{	ConfigureAOMValue(encoder, AOME_SET_CPUUSED, val); i++;	}
+
+			else if(arg == "--auto-alt-ref")
+			{	ConfigureAOMValue(encoder, AOME_SET_ENABLEAUTOALTREF, val); i++;	}
+
+			else if(arg == "--sharpness")
+			{	ConfigureAOMValue(encoder, AOME_SET_SHARPNESS, val); i++;	}
+
+			else if(arg == "--static-thresh")
+			{	ConfigureAOMValue(encoder, AOME_SET_STATIC_THRESHOLD, val); i++;	}
+
+			else if(arg == "--arnr-maxframes")
+			{	ConfigureAOMValue(encoder, AOME_SET_ARNR_MAXFRAMES, val); i++;	}
+
+			else if(arg == "--arnr-strength")
+			{	ConfigureAOMValue(encoder, AOME_SET_ARNR_STRENGTH, val); i++;	}
+
+			else if(arg == "--tune")
+			{
+				unsigned int ival = val == "psnr" ? AOM_TUNE_PSNR :
+									val == "ssim" ? AOM_TUNE_SSIM :
+									val == "vmaf_with_preprocessing" ? AOM_TUNE_VMAF_WITH_PREPROCESSING :
+									val == "vmaf_without_preprocessing" ? AOM_TUNE_VMAF_WITHOUT_PREPROCESSING :
+									val == "vmaf" ? AOM_TUNE_VMAF_MAX_GAIN :
+									val == "vmaf_neg" ? AOM_TUNE_VMAF_NEG_MAX_GAIN :
+									val == "butteraugli" ? AOM_TUNE_BUTTERAUGLI :
+									val == "vmaf_saliency_map" ? AOM_TUNE_VMAF_SALIENCY_MAP :
+									AOM_TUNE_PSNR;
+			
+				ConfigureAOMValue(encoder, AOME_SET_TUNING, ival);
+				i++;
+			}
+			else if(arg == "--cq-level")
+			{	ConfigureAOMValue(encoder, AOME_SET_CQ_LEVEL, val); i++;	}
+			
+			else if(arg == "--max-intra-rate")
+			{	ConfigureAOMValue(encoder, AOME_SET_MAX_INTRA_BITRATE_PCT, val); i++;	}
+
+			// AOME_SET_NUMBER_SPATIAL_LAYERS ?
+
+			else if(arg == "--max-inter-rate")
+			{	ConfigureAOMValue(encoder, AV1E_SET_MAX_INTER_BITRATE_PCT, val); i++;	}
+
+			else if(arg == "--gf-cbr-boost")
+			{	ConfigureAOMValue(encoder, AV1E_SET_GF_CBR_BOOST_PCT, val); i++;	}
+
+			else if(arg == "--lossless")
+			{	ConfigureAOMValue(encoder, AV1E_SET_LOSSLESS, 1);	}
+			
+			else if(arg == "--row-mt")
+			{	ConfigureAOMValue(encoder, AV1E_SET_ROW_MT, 1);	}
+
+			else if(arg == "--tile-columns")
+			{	ConfigureAOMValue(encoder, AV1E_SET_TILE_COLUMNS, val); i++;	}
+
+			else if(arg == "--tile-rows")
+			{	ConfigureAOMValue(encoder, AV1E_SET_TILE_ROWS, val); i++;	}
+			
+			else if(arg == "--enable-tpl-model")
+			{	ConfigureAOMValue(encoder, AV1E_SET_ENABLE_TPL_MODEL, val); i++;	}
+
+			else if(arg == "--enable-keyframe-filtering")
+			{	ConfigureAOMValue(encoder, AV1E_SET_ENABLE_KEYFRAME_FILTERING, val); i++;	}
+
+			else if(arg == "--frame-parallel")
+			{	ConfigureAOMValue(encoder, AV1E_SET_FRAME_PARALLEL_DECODING, val);	i++;	}
+
+			else if(arg == "--error-resilient")
+			{	ConfigureAOMValue(encoder, AV1E_SET_ERROR_RESILIENT_MODE, val);	i++;	}
+
+			else if(arg == "--sframe-mode")
+			{	ConfigureAOMValue(encoder, AV1E_SET_S_FRAME_MODE, val);	i++;	}
+
+			else if(arg == "--aq-mode")
+			{	ConfigureAOMValue(encoder, AV1E_SET_AQ_MODE, val);	i++;	}
+
+			else if(arg == "--frame_boost")
+			{	ConfigureAOMValue(encoder, AV1E_SET_FRAME_PERIODIC_BOOST, val); i++;	}
+
+			else if(arg == "--noise-sensitivity")
+			{	ConfigureAOMValue(encoder, AV1E_SET_NOISE_SENSITIVITY, val); i++;	}
+
+			else if(arg == "--tune-content")
+			{
+				unsigned int ival = val == "default" ? AOM_CONTENT_DEFAULT :
+									val == "screen" ? AOM_CONTENT_SCREEN :
+									val == "film" ? AOM_CONTENT_FILM :
+									AOM_CONTENT_DEFAULT;
+			
+				ConfigureAOMValue(encoder, AV1E_SET_TUNE_CONTENT, ival);
+				i++;
+			}
+
+			else if(arg == "--cdf-update-mode")
+			{	ConfigureAOMValue(encoder, AV1E_SET_CDF_UPDATE_MODE, val); i++;	}
+
+			else if(arg == "--color-primaries")
+			{
+				unsigned int ival = val == "unspecified" ? AOM_CICP_CP_UNSPECIFIED :
+									val == "bt601" ? AOM_CICP_CP_BT_601 :
+									val == "bt709" ? AOM_CICP_CP_BT_709 :
+									val == "bt470m" ? AOM_CICP_CP_BT_470_M :
+									val == "bt470bg" ? AOM_CICP_CP_BT_470_B_G :
+									val == "smpte240" ? AOM_CICP_CP_SMPTE_240 :
+									val == "film" ? AOM_CICP_CP_GENERIC_FILM :
+									val == "bt2020" ? AOM_CICP_CP_BT_2020 :
+									val == "xyz" ? AOM_CICP_CP_XYZ :
+									val == "smpte431" ? AOM_CICP_CP_SMPTE_431 :
+									val == "smpte432" ? AOM_CICP_CP_SMPTE_432 :
+									val == "ebu3213" ? AOM_CICP_CP_EBU_3213 :
+									AOM_CICP_CP_UNSPECIFIED;
+			
+				ConfigureAOMValue(encoder, AV1E_SET_COLOR_PRIMARIES, ival);
+				i++;
+			}
+			
+			else if(arg == "--transfer-characteristics")
+			{
+				unsigned int ival = val == "unspecified" ? AOM_CICP_CP_UNSPECIFIED :
+									val == "bt601" ? AOM_CICP_TC_BT_601 :
+									val == "bt709" ? AOM_CICP_TC_BT_709 :
+									val == "bt470m" ? AOM_CICP_TC_BT_470_M :
+									val == "bt470bg" ? AOM_CICP_TC_BT_470_B_G :
+									val == "smpte240" ? AOM_CICP_TC_SMPTE_240 :
+									val == "lin" ? AOM_CICP_TC_LINEAR :
+									val == "log100" ? AOM_CICP_TC_LOG_100 :
+									val == "log100sq10" ? AOM_CICP_TC_LOG_100_SQRT10 :
+									val == "iec61966" ? AOM_CICP_TC_IEC_61966 :
+									val == "srgb" ? AOM_CICP_TC_SRGB :
+									val == "bt2020-10bit" ? AOM_CICP_TC_BT_2020_10_BIT :
+									val == "bt2020-12bit" ? AOM_CICP_TC_BT_2020_12_BIT :
+									val == "smpte2084" ? AOM_CICP_TC_SMPTE_2084 :
+									val == "hlg" ? AOM_CICP_TC_HLG :
+									val == "smpte428" ? AOM_CICP_TC_SMPTE_428 :
+									AOM_CICP_CP_UNSPECIFIED;
+			
+				ConfigureAOMValue(encoder, AV1E_SET_TRANSFER_CHARACTERISTICS, ival);
+				i++;
+			}
+			
+			else if(arg == "--matrix-coefficients")
+			{
+				unsigned int ival = val == "unspecified" ? AOM_CICP_MC_UNSPECIFIED :
+									val == "bt601" ? AOM_CICP_MC_BT_601 :
+									val == "bt709" ? AOM_CICP_MC_BT_709 :
+									val == "identity" ? AOM_CICP_MC_IDENTITY :
+									val == "fcc73" ? AOM_CICP_MC_FCC :
+									val == "bt470bg" ? AOM_CICP_MC_BT_470_B_G :
+									val == "smpte240" ? AOM_CICP_CP_SMPTE_240 :
+									val == "ycgco" ? AOM_CICP_MC_SMPTE_YCGCO :
+									val == "bt2020ncl" ? AOM_CICP_MC_BT_2020_NCL :
+									val == "bt2020cl" ? AOM_CICP_MC_BT_2020_CL :
+									val == "smpte2085" ? AOM_CICP_MC_SMPTE_2085 :
+									val == "chromncl" ? AOM_CICP_MC_CHROMAT_NCL :
+									val == "chromcl" ? AOM_CICP_MC_CHROMAT_CL :
+									val == "ictcp" ? AOM_CICP_MC_ICTCP :
+									AOM_CICP_MC_UNSPECIFIED;
+			
+				ConfigureAOMValue(encoder, AV1E_SET_MATRIX_COEFFICIENTS, ival);
+				i++;
+			}
+			
+			else if(arg == "--chroma-sample-position")
+			{
+				unsigned int ival = val == "unknown" ? AOM_CSP_UNKNOWN :
+									val == "vertical" ? AOM_CSP_VERTICAL :
+									val == "colocated" ? AOM_CSP_COLOCATED :
+									AOM_CSP_UNKNOWN;
+			
+				ConfigureAOMValue(encoder, AV1E_SET_CHROMA_SAMPLE_POSITION, ival);
+				i++;
+			}
+			
+			else if(arg == "--min-gf-interval")
+			{	ConfigureAOMValue(encoder, AV1E_SET_MIN_GF_INTERVAL, val); i++;	}
+			
+			else if(arg == "--max-gf-interval")
+			{	ConfigureAOMValue(encoder, AV1E_SET_MAX_GF_INTERVAL, val); i++;	}
+
+			else if(arg == "--color-range")
+			{
+				unsigned int ival = val == "studio" ? AOM_CR_STUDIO_RANGE :
+									val == "full" ? AOM_CR_FULL_RANGE :
+									AOM_CR_STUDIO_RANGE;
+			
+				ConfigureAOMValue(encoder, AV1E_SET_COLOR_RANGE, ival);
+				i++;
+			}
+
+			else if(arg == "--target-seq-level-idx")
+			{	ConfigureAOMValue(encoder, AV1E_SET_TARGET_SEQ_LEVEL_IDX, val); i++;	}
+
+			else if(arg == "--sb-size")
+			{
+				unsigned int ival = val == "dynamic" ? AOM_SUPERBLOCK_SIZE_DYNAMIC :
+									val == "64" ? AOM_SUPERBLOCK_SIZE_64X64 :
+									val == "128" ? AOM_SUPERBLOCK_SIZE_128X128 :
+									AOM_SUPERBLOCK_SIZE_DYNAMIC;
+			
+				ConfigureAOMValue(encoder, AV1E_SET_SUPERBLOCK_SIZE, ival);
+				i++;
+			}
+
+			else if(arg == "--enable-cdef")
+			{	ConfigureAOMValue(encoder, AV1E_SET_ENABLE_CDEF, val); i++;	}
+
+			else if(arg == "--enable-restoration")
+			{	ConfigureAOMValue(encoder, AV1E_SET_ENABLE_RESTORATION, val); i++;	}
+
+			else if(arg == "--enable-obmc")
+			{	ConfigureAOMValue(encoder, AV1E_SET_ENABLE_OBMC, val); i++;	}
+
+			else if(arg == "--disable-trellis-quant")
+			{	ConfigureAOMValue(encoder, AV1E_SET_DISABLE_TRELLIS_QUANT, val); i++;	}
+
+			else if(arg == "--enable-qm")
+			{	ConfigureAOMValue(encoder, AV1E_SET_ENABLE_QM, val); i++;	}
+
+			else if(arg == "--qm-min")
+			{	ConfigureAOMValue(encoder, AV1E_SET_QM_MIN, val); i++;	}
+
+			else if(arg == "--qm-max")
+			{	ConfigureAOMValue(encoder, AV1E_SET_QM_MAX, val); i++;	}
+
+			else if(arg == "--num-tile-groups")
+			{	ConfigureAOMValue(encoder, AV1E_SET_NUM_TG, val); i++;	}
+
+			else if(arg == "--mtu-size")
+			{	ConfigureAOMValue(encoder, AV1E_SET_MTU, val); i++;	}
+
+			else if(arg == "--enable-rect-partitions")
+			{	ConfigureAOMValue(encoder, AV1E_SET_ENABLE_RECT_PARTITIONS, val); i++;	}
+
+			else if(arg == "--enable-ab-partitions")
+			{	ConfigureAOMValue(encoder, AV1E_SET_ENABLE_AB_PARTITIONS, val); i++;	}
+
+			else if(arg == "--enable-1to4-partitions")
+			{	ConfigureAOMValue(encoder, AV1E_SET_ENABLE_1TO4_PARTITIONS, val); i++;	}
+
+			else if(arg == "--min-partition-size")
+			{	ConfigureAOMValue(encoder, AV1E_SET_MIN_PARTITION_SIZE, val); i++;	}
+
+			else if(arg == "--max-partition-size")
+			{	ConfigureAOMValue(encoder, AV1E_SET_MAX_PARTITION_SIZE, val); i++;	}
+
+			else if(arg == "--enable-intra-edge-filter")
+			{	ConfigureAOMValue(encoder, AV1E_SET_ENABLE_INTRA_EDGE_FILTER, val); i++;	}
+
+			else if(arg == "--enable-order-hint")
+			{	ConfigureAOMValue(encoder, AV1E_SET_ENABLE_ORDER_HINT, val); i++;	}
+
+			else if(arg == "--enable-tx64")
+			{	ConfigureAOMValue(encoder, AV1E_SET_ENABLE_TX64, val); i++;	}
+
+			else if(arg == "--enable-flip-idtx")
+			{	ConfigureAOMValue(encoder, AV1E_SET_ENABLE_FLIP_IDTX, val); i++;	}
+
+			else if(arg == "--enable-rect-tx")
+			{	ConfigureAOMValue(encoder, AV1E_SET_ENABLE_RECT_TX, val); i++;	}
+
+			else if(arg == "--enable-dist-wtd-comp")
+			{	ConfigureAOMValue(encoder, AV1E_SET_ENABLE_DIST_WTD_COMP, val); i++;	}
+
+			else if(arg == "--enable-ref-frame-mvs")
+			{	ConfigureAOMValue(encoder, AV1E_SET_ENABLE_REF_FRAME_MVS, val); i++;	}
+
+			else if(arg == "--enable-dual-filter")
+			{	ConfigureAOMValue(encoder, AV1E_SET_ENABLE_DUAL_FILTER, val); i++;	}
+
+			else if(arg == "--enable-chroma-deltaq")
+			{	ConfigureAOMValue(encoder, AV1E_SET_ENABLE_CHROMA_DELTAQ, val); i++;	}
+
+			else if(arg == "--enable-masked-comp")
+			{	ConfigureAOMValue(encoder, AV1E_SET_ENABLE_MASKED_COMP, val); i++;	}
+
+			else if(arg == "--enable-onesided-comp")
+			{	ConfigureAOMValue(encoder, AV1E_SET_ENABLE_ONESIDED_COMP, val); i++;	}
+
+			else if(arg == "--enable-interintra-comp")
+			{	ConfigureAOMValue(encoder, AV1E_SET_ENABLE_INTERINTRA_COMP, val); i++;	}
+
+			else if(arg == "--enable-smooth-interintra")
+			{	ConfigureAOMValue(encoder, AV1E_SET_ENABLE_SMOOTH_INTERINTRA, val); i++;	}
+
+			else if(arg == "--enable-diff-wtd-comp")
+			{	ConfigureAOMValue(encoder, AV1E_SET_ENABLE_DIFF_WTD_COMP, val); i++;	}
+
+			else if(arg == "--enable-interinter-wedge")
+			{	ConfigureAOMValue(encoder, AV1E_SET_ENABLE_INTERINTER_WEDGE, val); i++;	}
+
+			else if(arg == "--enable-interintra-wedge")
+			{	ConfigureAOMValue(encoder, AV1E_SET_ENABLE_INTERINTRA_WEDGE, val); i++;	}
+
+			else if(arg == "--enable-global-motion")
+			{	ConfigureAOMValue(encoder, AV1E_SET_ENABLE_GLOBAL_MOTION, val); i++;	}
+
+			else if(arg == "--enable-warped-motion")
+			{	ConfigureAOMValue(encoder, AV1E_SET_ENABLE_WARPED_MOTION, val); i++;	}
+
+			else if(arg == "--enable-filter-intra")
+			{	ConfigureAOMValue(encoder, AV1E_SET_ENABLE_FILTER_INTRA, val); i++;	}
+
+			else if(arg == "--enable-smooth-intra")
+			{	ConfigureAOMValue(encoder, AV1E_SET_ENABLE_SMOOTH_INTRA, val); i++;	}
+
+			else if(arg == "--enable-paeth-intra")
+			{	ConfigureAOMValue(encoder, AV1E_SET_ENABLE_PAETH_INTRA, val); i++;	}
+
+			else if(arg == "--enable-cfl-intra")
+			{	ConfigureAOMValue(encoder, AV1E_SET_ENABLE_CFL_INTRA, val); i++;	}
+
+			else if(arg == "--enable-overlay")
+			{	ConfigureAOMValue(encoder, AV1E_SET_ENABLE_OVERLAY, val); i++;	}
+
+			else if(arg == "--enable-palette")
+			{	ConfigureAOMValue(encoder, AV1E_SET_ENABLE_PALETTE, val); i++;	}
+
+			else if(arg == "--enable-intrabc")
+			{	ConfigureAOMValue(encoder, AV1E_SET_ENABLE_INTRABC, val); i++;	}
+
+			else if(arg == "--enable-angle-delta")
+			{	ConfigureAOMValue(encoder, AV1E_SET_ENABLE_ANGLE_DELTA, val); i++;	}
+
+			else if(arg == "--deltaq-mode")
+			{	ConfigureAOMValue(encoder, AV1E_SET_DELTAQ_MODE, val); i++;	}
+
+			else if(arg == "--delta-lf-mode")
+			{	ConfigureAOMValue(encoder, AV1E_SET_DELTALF_MODE, val); i++;	}
+
+			else if(arg == "--timing-info")
+			{
+				unsigned int ival = val == "unspecified" ? AOM_TIMING_UNSPECIFIED :
+									val == "constant" ? AOM_TIMING_EQUAL :
+									val == "model" ? AOM_TIMING_DEC_MODEL :
+									AOM_TIMING_UNSPECIFIED;
+			
+				ConfigureAOMValue(encoder, AV1E_SET_TIMING_INFO_TYPE, ival);
+				i++;
+			}
+
+			else if(arg == "--film-grain-test")
+			{	ConfigureAOMValue(encoder, AV1E_SET_FILM_GRAIN_TEST_VECTOR, val); i++;	}
+			
+			// AV1E_SET_FILM_GRAIN_TABLE - a path?
+			
+			else if(arg == "--denoise-noise-level")
+			{	ConfigureAOMValue(encoder, AV1E_SET_DENOISE_NOISE_LEVEL, val); i++;	}
+						
+			else if(arg == "--denoise-block-size")
+			{	ConfigureAOMValue(encoder, AV1E_SET_DENOISE_BLOCK_SIZE, val); i++;	}
+						
+			else if(arg == "--reduced-tx-type-set")
+			{	ConfigureAOMValue(encoder, AV1E_SET_REDUCED_TX_TYPE_SET, val); i++;	}
+						
+			else if(arg == "--use-intra-dct-only")
+			{	ConfigureAOMValue(encoder, AV1E_SET_INTRA_DCT_ONLY, val); i++;	}
+						
+			else if(arg == "--use-inter-dct-only")
+			{	ConfigureAOMValue(encoder, AV1E_SET_INTER_DCT_ONLY, val); i++;	}
+						
+			else if(arg == "--use-intra-default-tx-only")
+			{	ConfigureAOMValue(encoder, AV1E_SET_INTRA_DEFAULT_TX_ONLY, val); i++;	}
+						
+			else if(arg == "--quant-b-adapt")
+			{	ConfigureAOMValue(encoder, AV1E_SET_QUANT_B_ADAPT, val); i++;	}
+						
+			else if(arg == "--gf-min-pyr-height")
+			{	ConfigureAOMValue(encoder, AV1E_SET_GF_MIN_PYRAMID_HEIGHT, val); i++;	}
+						
+			else if(arg == "--gf-max-pyr-height")
+			{	ConfigureAOMValue(encoder, AV1E_SET_GF_MAX_PYRAMID_HEIGHT, val); i++;	}
+						
+			else if(arg == "--max-reference-frames")
+			{	ConfigureAOMValue(encoder, AV1E_SET_MAX_REFERENCE_FRAMES, val); i++;	}
+						
+			else if(arg == "--reduced-reference-set")
+			{	ConfigureAOMValue(encoder, AV1E_SET_REDUCED_REFERENCE_SET, val); i++;	}
+						
+			else if(arg == "--coeff-cost-upd-freq")
+			{	ConfigureAOMValue(encoder, AV1E_SET_COEFF_COST_UPD_FREQ, val); i++;	}
+						
+			else if(arg == "--mode-cost-upd-freq")
+			{	ConfigureAOMValue(encoder, AV1E_SET_MODE_COST_UPD_FREQ, val); i++;	}
+						
+			else if(arg == "--mv-cost-upd-freq")
+			{	ConfigureAOMValue(encoder, AV1E_SET_MV_COST_UPD_FREQ, val); i++;	}
+						
+			else if(arg == "--set-tier-mask")
+			{	ConfigureAOMValue(encoder, AV1E_SET_TIER_MASK, val); i++;	}
+						
+			else if(arg == "--min-cr")
+			{	ConfigureAOMValue(encoder, AV1E_SET_MIN_CR, val); i++;	}
+						
+			else if(arg == "--vbr-corpus-complexity-lap")
+			{	ConfigureAOMValue(encoder, AV1E_SET_VBR_CORPUS_COMPLEXITY_LAP, val); i++;	}
+						
+			else if(arg == "--enable-dnl-denoising")
+			{	ConfigureAOMValue(encoder, AV1E_SET_ENABLE_DNL_DENOISING, val); i++;	}
+						
+			else if(arg == "--enable-diagonal-intra")
+			{	ConfigureAOMValue(encoder, AV1E_SET_ENABLE_DIAGONAL_INTRA, val); i++;	}
+						
+			else if(arg == "--dv-cost-upd-freq")
+			{	ConfigureAOMValue(encoder, AV1E_SET_DV_COST_UPD_FREQ, val); i++;	}
+			
+			// AV1E_SET_PARTITION_INFO_PATH - path?
+			
+			else if(arg == "--enable-directional-intra")
+			{	ConfigureAOMValue(encoder, AV1E_SET_ENABLE_DIRECTIONAL_INTRA, val); i++;	}
+									
+			else if(arg == "--enable-tx-size-search")
+			{	ConfigureAOMValue(encoder, AV1E_SET_ENABLE_TX_SIZE_SEARCH, val); i++;	}
+									
+			else if(arg == "--deltaq-strength")
+			{	ConfigureAOMValue(encoder, AV1E_SET_DELTAQ_STRENGTH, val); i++;	}
+									
+			else if(arg == "--loopfilter-control")
+			{	ConfigureAOMValue(encoder, AV1E_SET_LOOPFILTER_CONTROL, val); i++;	}
+									
+			else if(arg == "--auto-intra-tools-off")
+			{	ConfigureAOMValue(encoder, AV1E_SET_AUTO_INTRA_TOOLS_OFF, val); i++;	}
+									
+			else if(arg == "--fp-mt")
+			{	ConfigureAOMValue(encoder, AV1E_SET_FP_MT, val); i++;	}
+									
+			else if(arg == "--sb-qp-sweep")
+			{	ConfigureAOMValue(encoder, AV1E_ENABLE_SB_QP_SWEEP, val); i++;	}
+									
+			else if(arg == "--enable-rate-guide-deltaq")
+			{	ConfigureAOMValue(encoder, AV1E_ENABLE_RATE_GUIDE_DELTAQ, val); i++;	}
+			
+			else if(arg == "--rate-distribution-info")
+			{	ConfigureAOMValue(encoder, AV1E_SET_RATE_DISTRIBUTION_INFO, val); i++;	}
+			
+			i++;
+		}
+		
+		return (config_err == AOM_CODEC_OK);
+	}
+	else
+		return false;
+}
