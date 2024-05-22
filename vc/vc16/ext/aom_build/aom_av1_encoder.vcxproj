@@ -1,0 +1,403 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" ToolsVersion="16.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <PreferredToolArchitecture>x64</PreferredToolArchitecture>
+  </PropertyGroup>
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="MinSizeRel|x64">
+      <Configuration>MinSizeRel</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="RelWithDebInfo|x64">
+      <Configuration>RelWithDebInfo</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{00DA5182-8C03-37F6-A92C-AC2158E0E87A}</ProjectGuid>
+    <Keyword>Win32Proj</Keyword>
+    <WindowsTargetPlatformVersion>10.0.19041.0</WindowsTargetPlatformVersion>
+    <Platform>x64</Platform>
+    <ProjectName>aom_av1_encoder</ProjectName>
+    <VCProjectUpgraderObjectName>NoUpgrade</VCProjectUpgraderObjectName>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
+    <ConfigurationType>StaticLibrary</ConfigurationType>
+    <CharacterSet>MultiByte</CharacterSet>
+    <PlatformToolset>v142</PlatformToolset>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <ConfigurationType>StaticLibrary</ConfigurationType>
+    <CharacterSet>MultiByte</CharacterSet>
+    <PlatformToolset>v142</PlatformToolset>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'" Label="Configuration">
+    <ConfigurationType>StaticLibrary</ConfigurationType>
+    <CharacterSet>MultiByte</CharacterSet>
+    <PlatformToolset>v142</PlatformToolset>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'" Label="Configuration">
+    <ConfigurationType>StaticLibrary</ConfigurationType>
+    <CharacterSet>MultiByte</CharacterSet>
+    <PlatformToolset>v142</PlatformToolset>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings">
+    <Import Project=".\aom_av1_encoder.dir\nasm.props" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+  <PropertyGroup>
+    <_ProjectFileVersion>10.0.20506.1</_ProjectFileVersion>
+    <OutDir Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">build\$(Platform)\$(Configuration)\</OutDir>
+    <IntDir Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">aom_av1_encoder.dir\Debug\</IntDir>
+    <TargetName Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">aom_av1_encoder</TargetName>
+    <TargetExt Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">.lib</TargetExt>
+    <OutDir Condition="'$(Configuration)|$(Platform)'=='Release|x64'">build\$(Platform)\$(Configuration)\</OutDir>
+    <IntDir Condition="'$(Configuration)|$(Platform)'=='Release|x64'">aom_av1_encoder.dir\Release\</IntDir>
+    <TargetName Condition="'$(Configuration)|$(Platform)'=='Release|x64'">aom_av1_encoder</TargetName>
+    <TargetExt Condition="'$(Configuration)|$(Platform)'=='Release|x64'">.lib</TargetExt>
+    <OutDir Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">build\$(Platform)\$(Configuration)\</OutDir>
+    <IntDir Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">aom_av1_encoder.dir\MinSizeRel\</IntDir>
+    <TargetName Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">aom_av1_encoder</TargetName>
+    <TargetExt Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">.lib</TargetExt>
+    <OutDir Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">build\$(Platform)\$(Configuration)\</OutDir>
+    <IntDir Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">aom_av1_encoder.dir\RelWithDebInfo\</IntDir>
+    <TargetName Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">aom_av1_encoder</TargetName>
+    <TargetExt Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">.lib</TargetExt>
+  </PropertyGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <ClCompile>
+      <AdditionalIncludeDirectories>.;..\..\..\..\ext\aom;..\..\..\..\ext\aom\apps;..\..\..\..\ext\aom\common;..\..\..\..\ext\aom\examples;..\..\..\..\ext\aom\stats;..\..\..\..\ext\aom\third_party\libyuv\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AssemblerListingLocation>$(IntDir)</AssemblerListingLocation>
+      <BasicRuntimeChecks>EnableFastChecks</BasicRuntimeChecks>
+      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+      <DisableSpecificWarnings>4996</DisableSpecificWarnings>
+      <ExceptionHandling>
+      </ExceptionHandling>
+      <InlineFunctionExpansion>Disabled</InlineFunctionExpansion>
+      <Optimization>Disabled</Optimization>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <RuntimeLibrary>MultiThreadedDebugDLL</RuntimeLibrary>
+      <UseFullPaths>false</UseFullPaths>
+      <WarningLevel>Level3</WarningLevel>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;_WIN32_WINNT=0x0601;_CRT_SECURE_NO_WARNINGS;CMAKE_INTDIR="Debug"</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)</ObjectFileName>
+    </ClCompile>
+    <ResourceCompile>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_DEBUG;_WINDOWS;_WIN32_WINNT=0x0601;_CRT_SECURE_NO_WARNINGS;CMAKE_INTDIR=\"Debug\"</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>..\..\..\..\ext\aom;C:\temp\AdobeWebM\vc\vc16\ext\aom_build;..\..\..\..\ext\aom\apps;..\..\..\..\ext\aom\common;..\..\..\..\ext\aom\examples;..\..\..\..\ext\aom\stats;..\..\..\..\ext\aom\third_party\libyuv\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ResourceCompile>
+    <NASM>
+      <IncludePaths>..\..\..\..\ext\aom\;.\;..\..\..\..\ext\aom\apps\;..\..\..\..\ext\aom\common\;..\..\..\..\ext\aom\examples\;..\..\..\..\ext\aom\stats\;..\..\..\..\ext\aom\third_party\libyuv\include\;%(IncludePaths)</IncludePaths>
+      <Outputswitch>1</Outputswitch>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;_WIN32_WINNT=0x0601;_CRT_SECURE_NO_WARNINGS;CMAKE_INTDIR="Debug"</PreprocessorDefinitions>
+    </NASM>
+    <Midl>
+      <AdditionalIncludeDirectories>..\..\..\..\ext\aom;C:\temp\AdobeWebM\vc\vc16\ext\aom_build;..\..\..\..\ext\aom\apps;..\..\..\..\ext\aom\common;..\..\..\..\ext\aom\examples;..\..\..\..\ext\aom\stats;..\..\..\..\ext\aom\third_party\libyuv\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <OutputDirectory>$(ProjectDir)/$(IntDir)</OutputDirectory>
+      <HeaderFileName>%(Filename).h</HeaderFileName>
+      <TypeLibraryName>%(Filename).tlb</TypeLibraryName>
+      <InterfaceIdentifierFileName>%(Filename)_i.c</InterfaceIdentifierFileName>
+      <ProxyFileName>%(Filename)_p.c</ProxyFileName>
+    </Midl>
+    <Lib>
+      <AdditionalOptions>%(AdditionalOptions) /machine:x64</AdditionalOptions>
+    </Lib>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <AdditionalIncludeDirectories>.;..\..\..\..\ext\aom;..\..\..\..\ext\aom\apps;..\..\..\..\ext\aom\common;..\..\..\..\ext\aom\examples;..\..\..\..\ext\aom\stats;..\..\..\..\ext\aom\third_party\libyuv\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AssemblerListingLocation>$(IntDir)</AssemblerListingLocation>
+      <DisableSpecificWarnings>4996</DisableSpecificWarnings>
+      <ExceptionHandling>
+      </ExceptionHandling>
+      <InlineFunctionExpansion>AnySuitable</InlineFunctionExpansion>
+      <Optimization>MaxSpeed</Optimization>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
+      <UseFullPaths>false</UseFullPaths>
+      <WarningLevel>Level3</WarningLevel>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;_WIN32_WINNT=0x0601;_CRT_SECURE_NO_WARNINGS;CMAKE_INTDIR="Release"</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)</ObjectFileName>
+      <DebugInformationFormat>
+      </DebugInformationFormat>
+    </ClCompile>
+    <ResourceCompile>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;_WIN32_WINNT=0x0601;_CRT_SECURE_NO_WARNINGS;CMAKE_INTDIR=\"Release\"</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>..\..\..\..\ext\aom;C:\temp\AdobeWebM\vc\vc16\ext\aom_build;..\..\..\..\ext\aom\apps;..\..\..\..\ext\aom\common;..\..\..\..\ext\aom\examples;..\..\..\..\ext\aom\stats;..\..\..\..\ext\aom\third_party\libyuv\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ResourceCompile>
+    <NASM>
+      <IncludePaths>..\..\..\..\ext\aom\;.\;..\..\..\..\ext\aom\apps\;..\..\..\..\ext\aom\common\;..\..\..\..\ext\aom\examples\;..\..\..\..\ext\aom\stats\;..\..\..\..\ext\aom\third_party\libyuv\include\;%(IncludePaths)</IncludePaths>
+      <Outputswitch>1</Outputswitch>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;_WIN32_WINNT=0x0601;_CRT_SECURE_NO_WARNINGS;CMAKE_INTDIR="Release"</PreprocessorDefinitions>
+    </NASM>
+    <Midl>
+      <AdditionalIncludeDirectories>..\..\..\..\ext\aom;C:\temp\AdobeWebM\vc\vc16\ext\aom_build;..\..\..\..\ext\aom\apps;..\..\..\..\ext\aom\common;..\..\..\..\ext\aom\examples;..\..\..\..\ext\aom\stats;..\..\..\..\ext\aom\third_party\libyuv\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <OutputDirectory>$(ProjectDir)/$(IntDir)</OutputDirectory>
+      <HeaderFileName>%(Filename).h</HeaderFileName>
+      <TypeLibraryName>%(Filename).tlb</TypeLibraryName>
+      <InterfaceIdentifierFileName>%(Filename)_i.c</InterfaceIdentifierFileName>
+      <ProxyFileName>%(Filename)_p.c</ProxyFileName>
+    </Midl>
+    <Lib>
+      <AdditionalOptions>%(AdditionalOptions) /machine:x64</AdditionalOptions>
+    </Lib>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">
+    <ClCompile>
+      <AdditionalIncludeDirectories>.;..\..\..\..\ext\aom;..\..\..\..\ext\aom\apps;..\..\..\..\ext\aom\common;..\..\..\..\ext\aom\examples;..\..\..\..\ext\aom\stats;..\..\..\..\ext\aom\third_party\libyuv\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AssemblerListingLocation>$(IntDir)</AssemblerListingLocation>
+      <DisableSpecificWarnings>4996</DisableSpecificWarnings>
+      <ExceptionHandling>
+      </ExceptionHandling>
+      <InlineFunctionExpansion>OnlyExplicitInline</InlineFunctionExpansion>
+      <Optimization>MinSpace</Optimization>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
+      <UseFullPaths>false</UseFullPaths>
+      <WarningLevel>Level3</WarningLevel>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;_WIN32_WINNT=0x0601;_CRT_SECURE_NO_WARNINGS;CMAKE_INTDIR="MinSizeRel"</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)</ObjectFileName>
+      <DebugInformationFormat>
+      </DebugInformationFormat>
+    </ClCompile>
+    <ResourceCompile>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;_WIN32_WINNT=0x0601;_CRT_SECURE_NO_WARNINGS;CMAKE_INTDIR=\"MinSizeRel\"</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>..\..\..\..\ext\aom;C:\temp\AdobeWebM\vc\vc16\ext\aom_build;..\..\..\..\ext\aom\apps;..\..\..\..\ext\aom\common;..\..\..\..\ext\aom\examples;..\..\..\..\ext\aom\stats;..\..\..\..\ext\aom\third_party\libyuv\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ResourceCompile>
+    <NASM>
+      <IncludePaths>..\..\..\..\ext\aom\;.\;..\..\..\..\ext\aom\apps\;..\..\..\..\ext\aom\common\;..\..\..\..\ext\aom\examples\;..\..\..\..\ext\aom\stats\;..\..\..\..\ext\aom\third_party\libyuv\include\;%(IncludePaths)</IncludePaths>
+      <Outputswitch>1</Outputswitch>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;_WIN32_WINNT=0x0601;_CRT_SECURE_NO_WARNINGS;CMAKE_INTDIR="MinSizeRel"</PreprocessorDefinitions>
+    </NASM>
+    <Midl>
+      <AdditionalIncludeDirectories>..\..\..\..\ext\aom;C:\temp\AdobeWebM\vc\vc16\ext\aom_build;..\..\..\..\ext\aom\apps;..\..\..\..\ext\aom\common;..\..\..\..\ext\aom\examples;..\..\..\..\ext\aom\stats;..\..\..\..\ext\aom\third_party\libyuv\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <OutputDirectory>$(ProjectDir)/$(IntDir)</OutputDirectory>
+      <HeaderFileName>%(Filename).h</HeaderFileName>
+      <TypeLibraryName>%(Filename).tlb</TypeLibraryName>
+      <InterfaceIdentifierFileName>%(Filename)_i.c</InterfaceIdentifierFileName>
+      <ProxyFileName>%(Filename)_p.c</ProxyFileName>
+    </Midl>
+    <Lib>
+      <AdditionalOptions>%(AdditionalOptions) /machine:x64</AdditionalOptions>
+    </Lib>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">
+    <ClCompile>
+      <AdditionalIncludeDirectories>.;..\..\..\..\ext\aom;..\..\..\..\ext\aom\apps;..\..\..\..\ext\aom\common;..\..\..\..\ext\aom\examples;..\..\..\..\ext\aom\stats;..\..\..\..\ext\aom\third_party\libyuv\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AssemblerListingLocation>$(IntDir)</AssemblerListingLocation>
+      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+      <DisableSpecificWarnings>4996</DisableSpecificWarnings>
+      <ExceptionHandling>
+      </ExceptionHandling>
+      <InlineFunctionExpansion>OnlyExplicitInline</InlineFunctionExpansion>
+      <Optimization>MaxSpeed</Optimization>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
+      <UseFullPaths>false</UseFullPaths>
+      <WarningLevel>Level3</WarningLevel>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;_WIN32_WINNT=0x0601;_CRT_SECURE_NO_WARNINGS;CMAKE_INTDIR="RelWithDebInfo"</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)</ObjectFileName>
+    </ClCompile>
+    <ResourceCompile>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;_WIN32_WINNT=0x0601;_CRT_SECURE_NO_WARNINGS;CMAKE_INTDIR=\"RelWithDebInfo\"</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>..\..\..\..\ext\aom;C:\temp\AdobeWebM\vc\vc16\ext\aom_build;..\..\..\..\ext\aom\apps;..\..\..\..\ext\aom\common;..\..\..\..\ext\aom\examples;..\..\..\..\ext\aom\stats;..\..\..\..\ext\aom\third_party\libyuv\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ResourceCompile>
+    <NASM>
+      <IncludePaths>..\..\..\..\ext\aom\;.\;..\..\..\..\ext\aom\apps\;..\..\..\..\ext\aom\common\;..\..\..\..\ext\aom\examples\;..\..\..\..\ext\aom\stats\;..\..\..\..\ext\aom\third_party\libyuv\include\;%(IncludePaths)</IncludePaths>
+      <Outputswitch>1</Outputswitch>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;_WIN32_WINNT=0x0601;_CRT_SECURE_NO_WARNINGS;CMAKE_INTDIR="RelWithDebInfo"</PreprocessorDefinitions>
+    </NASM>
+    <Midl>
+      <AdditionalIncludeDirectories>..\..\..\..\ext\aom;C:\temp\AdobeWebM\vc\vc16\ext\aom_build;..\..\..\..\ext\aom\apps;..\..\..\..\ext\aom\common;..\..\..\..\ext\aom\examples;..\..\..\..\ext\aom\stats;..\..\..\..\ext\aom\third_party\libyuv\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <OutputDirectory>$(ProjectDir)/$(IntDir)</OutputDirectory>
+      <HeaderFileName>%(Filename).h</HeaderFileName>
+      <TypeLibraryName>%(Filename).tlb</TypeLibraryName>
+      <InterfaceIdentifierFileName>%(Filename)_i.c</InterfaceIdentifierFileName>
+      <ProxyFileName>%(Filename)_p.c</ProxyFileName>
+    </Midl>
+    <Lib>
+      <AdditionalOptions>%(AdditionalOptions) /machine:x64</AdditionalOptions>
+    </Lib>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClCompile Include="..\..\..\..\ext\aom\av1\av1_cx_iface.c" />
+    <ClInclude Include="..\..\..\..\ext\aom\av1\av1_cx_iface.h" />
+    <ClCompile Include="..\..\..\..\ext\aom\av1\encoder\aq_complexity.c" />
+    <ClInclude Include="..\..\..\..\ext\aom\av1\encoder\aq_complexity.h" />
+    <ClCompile Include="..\..\..\..\ext\aom\av1\encoder\aq_cyclicrefresh.c" />
+    <ClInclude Include="..\..\..\..\ext\aom\av1\encoder\aq_cyclicrefresh.h" />
+    <ClCompile Include="..\..\..\..\ext\aom\av1\encoder\aq_variance.c" />
+    <ClInclude Include="..\..\..\..\ext\aom\av1\encoder\aq_variance.h" />
+    <ClCompile Include="..\..\..\..\ext\aom\av1\encoder\allintra_vis.c" />
+    <ClInclude Include="..\..\..\..\ext\aom\av1\encoder\allintra_vis.h" />
+    <ClInclude Include="..\..\..\..\ext\aom\av1\encoder\enc_enums.h" />
+    <ClCompile Include="..\..\..\..\ext\aom\av1\encoder\av1_fwd_txfm1d.c" />
+    <ClInclude Include="..\..\..\..\ext\aom\av1\encoder\av1_fwd_txfm1d.h" />
+    <ClInclude Include="..\..\..\..\ext\aom\av1\encoder\av1_fwd_txfm1d_cfg.h" />
+    <ClCompile Include="..\..\..\..\ext\aom\av1\encoder\av1_fwd_txfm2d.c" />
+    <ClCompile Include="..\..\..\..\ext\aom\av1\encoder\av1_quantize.c" />
+    <ClInclude Include="..\..\..\..\ext\aom\av1\encoder\av1_quantize.h" />
+    <ClCompile Include="..\..\..\..\ext\aom\av1\encoder\bitstream.c" />
+    <ClInclude Include="..\..\..\..\ext\aom\av1\encoder\bitstream.h" />
+    <ClInclude Include="..\..\..\..\ext\aom\av1\encoder\block.h" />
+    <ClCompile Include="..\..\..\..\ext\aom\av1\encoder\cnn.c" />
+    <ClInclude Include="..\..\..\..\ext\aom\av1\encoder\cnn.h" />
+    <ClCompile Include="..\..\..\..\ext\aom\av1\encoder\compound_type.c" />
+    <ClInclude Include="..\..\..\..\ext\aom\av1\encoder\compound_type.h" />
+    <ClCompile Include="..\..\..\..\ext\aom\av1\encoder\context_tree.c" />
+    <ClInclude Include="..\..\..\..\ext\aom\av1\encoder\context_tree.h" />
+    <ClCompile Include="..\..\..\..\ext\aom\av1\encoder\cost.c" />
+    <ClInclude Include="..\..\..\..\ext\aom\av1\encoder\cost.h" />
+    <ClCompile Include="..\..\..\..\ext\aom\av1\encoder\encodeframe.c" />
+    <ClInclude Include="..\..\..\..\ext\aom\av1\encoder\encodeframe.h" />
+    <ClCompile Include="..\..\..\..\ext\aom\av1\encoder\encodeframe_utils.c" />
+    <ClInclude Include="..\..\..\..\ext\aom\av1\encoder\encodeframe_utils.h" />
+    <ClCompile Include="..\..\..\..\ext\aom\av1\encoder\encodemb.c" />
+    <ClInclude Include="..\..\..\..\ext\aom\av1\encoder\encodemb.h" />
+    <ClCompile Include="..\..\..\..\ext\aom\av1\encoder\encodemv.c" />
+    <ClInclude Include="..\..\..\..\ext\aom\av1\encoder\encodemv.h" />
+    <ClCompile Include="..\..\..\..\ext\aom\av1\encoder\encode_strategy.c" />
+    <ClInclude Include="..\..\..\..\ext\aom\av1\encoder\encode_strategy.h" />
+    <ClCompile Include="..\..\..\..\ext\aom\av1\encoder\encoder.c" />
+    <ClInclude Include="..\..\..\..\ext\aom\av1\encoder\encoder.h" />
+    <ClInclude Include="..\..\..\..\ext\aom\av1\encoder\encoder_alloc.h" />
+    <ClCompile Include="..\..\..\..\ext\aom\av1\encoder\encoder_utils.c" />
+    <ClInclude Include="..\..\..\..\ext\aom\av1\encoder\encoder_utils.h" />
+    <ClCompile Include="..\..\..\..\ext\aom\av1\encoder\encodetxb.c" />
+    <ClInclude Include="..\..\..\..\ext\aom\av1\encoder\encodetxb.h" />
+    <ClCompile Include="..\..\..\..\ext\aom\av1\encoder\ethread.c" />
+    <ClInclude Include="..\..\..\..\ext\aom\av1\encoder\ethread.h" />
+    <ClCompile Include="..\..\..\..\ext\aom\av1\encoder\extend.c" />
+    <ClInclude Include="..\..\..\..\ext\aom\av1\encoder\extend.h" />
+    <ClCompile Include="..\..\..\..\ext\aom\av1\encoder\external_partition.c" />
+    <ClInclude Include="..\..\..\..\ext\aom\av1\encoder\external_partition.h" />
+    <ClCompile Include="..\..\..\..\ext\aom\av1\encoder\firstpass.c" />
+    <ClInclude Include="..\..\..\..\ext\aom\av1\encoder\firstpass.h" />
+    <ClCompile Include="..\..\..\..\ext\aom\av1\encoder\global_motion.c" />
+    <ClInclude Include="..\..\..\..\ext\aom\av1\encoder\global_motion.h" />
+    <ClCompile Include="..\..\..\..\ext\aom\av1\encoder\global_motion_facade.c" />
+    <ClInclude Include="..\..\..\..\ext\aom\av1\encoder\global_motion_facade.h" />
+    <ClCompile Include="..\..\..\..\ext\aom\av1\encoder\gop_structure.c" />
+    <ClInclude Include="..\..\..\..\ext\aom\av1\encoder\gop_structure.h" />
+    <ClInclude Include="..\..\..\..\ext\aom\av1\encoder\grain_test_vectors.h" />
+    <ClCompile Include="..\..\..\..\ext\aom\av1\encoder\hash.c" />
+    <ClInclude Include="..\..\..\..\ext\aom\av1\encoder\hash.h" />
+    <ClCompile Include="..\..\..\..\ext\aom\av1\encoder\hash_motion.c" />
+    <ClInclude Include="..\..\..\..\ext\aom\av1\encoder\hash_motion.h" />
+    <ClCompile Include="..\..\..\..\ext\aom\av1\encoder\hybrid_fwd_txfm.c" />
+    <ClInclude Include="..\..\..\..\ext\aom\av1\encoder\hybrid_fwd_txfm.h" />
+    <ClCompile Include="..\..\..\..\ext\aom\av1\encoder\interp_search.c" />
+    <ClInclude Include="..\..\..\..\ext\aom\av1\encoder\interp_search.h" />
+    <ClCompile Include="..\..\..\..\ext\aom\av1\encoder\level.c" />
+    <ClInclude Include="..\..\..\..\ext\aom\av1\encoder\level.h" />
+    <ClCompile Include="..\..\..\..\ext\aom\av1\encoder\lookahead.c" />
+    <ClInclude Include="..\..\..\..\ext\aom\av1\encoder\lookahead.h" />
+    <ClCompile Include="..\..\..\..\ext\aom\av1\encoder\mcomp.c" />
+    <ClInclude Include="..\..\..\..\ext\aom\av1\encoder\mcomp.h" />
+    <ClInclude Include="..\..\..\..\ext\aom\av1\encoder\mcomp_structs.h" />
+    <ClCompile Include="..\..\..\..\ext\aom\av1\encoder\ml.c" />
+    <ClInclude Include="..\..\..\..\ext\aom\av1\encoder\ml.h" />
+    <ClInclude Include="..\..\..\..\ext\aom\av1\encoder\model_rd.h" />
+    <ClCompile Include="..\..\..\..\ext\aom\av1\encoder\motion_search_facade.c" />
+    <ClInclude Include="..\..\..\..\ext\aom\av1\encoder\motion_search_facade.h" />
+    <ClCompile Include="..\..\..\..\ext\aom\av1\encoder\mv_prec.c" />
+    <ClInclude Include="..\..\..\..\ext\aom\av1\encoder\mv_prec.h" />
+    <ClCompile Include="..\..\..\..\ext\aom\av1\encoder\palette.c" />
+    <ClInclude Include="..\..\..\..\ext\aom\av1\encoder\palette.h" />
+    <ClInclude Include="..\..\..\..\ext\aom\av1\encoder\partition_search.h" />
+    <ClCompile Include="..\..\..\..\ext\aom\av1\encoder\partition_search.c" />
+    <ClInclude Include="..\..\..\..\ext\aom\av1\encoder\partition_strategy.h" />
+    <ClCompile Include="..\..\..\..\ext\aom\av1\encoder\partition_strategy.c" />
+    <ClInclude Include="..\..\..\..\ext\aom\av1\encoder\pass2_strategy.h" />
+    <ClCompile Include="..\..\..\..\ext\aom\av1\encoder\pass2_strategy.c" />
+    <ClCompile Include="..\..\..\..\ext\aom\av1\encoder\pickcdef.c" />
+    <ClInclude Include="..\..\..\..\ext\aom\av1\encoder\pickcdef.h" />
+    <ClCompile Include="..\..\..\..\ext\aom\av1\encoder\picklpf.c" />
+    <ClInclude Include="..\..\..\..\ext\aom\av1\encoder\picklpf.h" />
+    <ClCompile Include="..\..\..\..\ext\aom\av1\encoder\pickrst.c" />
+    <ClInclude Include="..\..\..\..\ext\aom\av1\encoder\pickrst.h" />
+    <ClCompile Include="..\..\..\..\ext\aom\av1\encoder\ratectrl.c" />
+    <ClInclude Include="..\..\..\..\ext\aom\av1\encoder\ratectrl.h" />
+    <ClInclude Include="..\..\..\..\ext\aom\av1\encoder\rc_utils.h" />
+    <ClCompile Include="..\..\..\..\ext\aom\av1\encoder\rd.c" />
+    <ClInclude Include="..\..\..\..\ext\aom\av1\encoder\rd.h" />
+    <ClCompile Include="..\..\..\..\ext\aom\av1\encoder\rdopt.c" />
+    <ClCompile Include="..\..\..\..\ext\aom\av1\encoder\nonrd_pickmode.c" />
+    <ClCompile Include="..\..\..\..\ext\aom\av1\encoder\nonrd_opt.c" />
+    <ClInclude Include="..\..\..\..\ext\aom\av1\encoder\nonrd_opt.h" />
+    <ClInclude Include="..\..\..\..\ext\aom\av1\encoder\rdopt.h" />
+    <ClInclude Include="..\..\..\..\ext\aom\av1\encoder\rdopt_data_defs.h" />
+    <ClInclude Include="..\..\..\..\ext\aom\av1\encoder\rdopt_utils.h" />
+    <ClCompile Include="..\..\..\..\ext\aom\av1\encoder\reconinter_enc.c" />
+    <ClInclude Include="..\..\..\..\ext\aom\av1\encoder\reconinter_enc.h" />
+    <ClCompile Include="..\..\..\..\ext\aom\av1\encoder\segmentation.c" />
+    <ClInclude Include="..\..\..\..\ext\aom\av1\encoder\segmentation.h" />
+    <ClInclude Include="..\..\..\..\ext\aom\av1\encoder\sorting_network.h" />
+    <ClCompile Include="..\..\..\..\ext\aom\av1\encoder\speed_features.c" />
+    <ClInclude Include="..\..\..\..\ext\aom\av1\encoder\speed_features.h" />
+    <ClCompile Include="..\..\..\..\ext\aom\av1\encoder\superres_scale.c" />
+    <ClInclude Include="..\..\..\..\ext\aom\av1\encoder\superres_scale.h" />
+    <ClCompile Include="..\..\..\..\ext\aom\av1\encoder\svc_layercontext.c" />
+    <ClInclude Include="..\..\..\..\ext\aom\av1\encoder\svc_layercontext.h" />
+    <ClCompile Include="..\..\..\..\ext\aom\av1\encoder\temporal_filter.c" />
+    <ClInclude Include="..\..\..\..\ext\aom\av1\encoder\temporal_filter.h" />
+    <ClCompile Include="..\..\..\..\ext\aom\av1\encoder\thirdpass.c" />
+    <ClInclude Include="..\..\..\..\ext\aom\av1\encoder\thirdpass.h" />
+    <ClCompile Include="..\..\..\..\ext\aom\av1\encoder\tokenize.c" />
+    <ClInclude Include="..\..\..\..\ext\aom\av1\encoder\tokenize.h" />
+    <ClCompile Include="..\..\..\..\ext\aom\av1\encoder\tpl_model.c" />
+    <ClInclude Include="..\..\..\..\ext\aom\av1\encoder\tpl_model.h" />
+    <ClCompile Include="..\..\..\..\ext\aom\av1\encoder\tx_search.c" />
+    <ClInclude Include="..\..\..\..\ext\aom\av1\encoder\tx_search.h" />
+    <ClCompile Include="..\..\..\..\ext\aom\av1\encoder\txb_rdopt.c" />
+    <ClInclude Include="..\..\..\..\ext\aom\av1\encoder\txb_rdopt.h" />
+    <ClInclude Include="..\..\..\..\ext\aom\av1\encoder\txb_rdopt_utils.h" />
+    <ClCompile Include="..\..\..\..\ext\aom\av1\encoder\intra_mode_search.c" />
+    <ClInclude Include="..\..\..\..\ext\aom\av1\encoder\intra_mode_search.h" />
+    <ClInclude Include="..\..\..\..\ext\aom\av1\encoder\intra_mode_search_utils.h" />
+    <ClCompile Include="..\..\..\..\ext\aom\av1\encoder\wedge_utils.c" />
+    <ClCompile Include="..\..\..\..\ext\aom\av1\encoder\var_based_part.c" />
+    <ClInclude Include="..\..\..\..\ext\aom\av1\encoder\var_based_part.h" />
+    <ClCompile Include="..\..\..\..\ext\aom\av1\encoder\av1_noise_estimate.c" />
+    <ClInclude Include="..\..\..\..\ext\aom\av1\encoder\av1_noise_estimate.h" />
+    <ClCompile Include="..\..\..\..\ext\aom\third_party\fastfeat\fast.c" />
+    <ClInclude Include="..\..\..\..\ext\aom\third_party\fastfeat\fast.h" />
+    <ClCompile Include="..\..\..\..\ext\aom\third_party\fastfeat\fast_9.c" />
+    <ClCompile Include="..\..\..\..\ext\aom\third_party\fastfeat\nonmax.c" />
+    <ClCompile Include="..\..\..\..\ext\aom\third_party\vector\vector.c" />
+    <ClInclude Include="..\..\..\..\ext\aom\third_party\vector\vector.h" />
+    <ClCompile Include="..\..\..\..\ext\aom\av1\encoder\dwt.c" />
+    <ClInclude Include="..\..\..\..\ext\aom\av1\encoder\dwt.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include=".\ZERO_CHECK.vcxproj">
+      <Project>{721D5FBF-F852-3E59-8E3A-BD51A5F9C437}</Project>
+      <Name>ZERO_CHECK</Name>
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+      <CopyToOutputDirectory>Never</CopyToOutputDirectory>
+    </ProjectReference>
+    <ProjectReference Include=".\aom_rtcd.vcxproj">
+      <Project>{2FE19CC4-8034-38E9-BDC2-089CD6183945}</Project>
+      <Name>aom_rtcd</Name>
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+      <CopyToOutputDirectory>Never</CopyToOutputDirectory>
+    </ProjectReference>
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets">
+    <Import Project="C:\Program Files\CMake\share\cmake-3.23\Templates\MSBuild\nasm.targets" />
+  </ImportGroup>
+</Project>
