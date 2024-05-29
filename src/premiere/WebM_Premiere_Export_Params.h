@@ -53,6 +53,14 @@ typedef enum {
 } WebM_Video_Codec;
 
 typedef enum {
+	AV1_CODEC_AUTO = 0,
+	AV1_CODEC_AOM,
+	AV1_CODEC_NVENC,
+	AV1_CODEC_INTEL,
+	AV1_CODEC_AMD
+} AV1_Codec;
+
+typedef enum {
 	WEBM_METHOD_CONSTANT_QUALITY = 0,
 	WEBM_METHOD_BITRATE,
 	WEBM_METHOD_VBR,

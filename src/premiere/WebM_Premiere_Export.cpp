@@ -55,6 +55,7 @@
 	#define LONG_LONG_MAX LLONG_MAX
 #endif
 
+#include <string>
 #include <queue>
 
 
@@ -64,6 +65,15 @@
 #include "aom/aom_codec.h"
 #include "aom/aom_encoder.h"
 #include "aom/aomcx.h"
+
+#ifdef WEBM_HAVE_NVENC
+#include <cuda.h>
+#include <cuda_runtime.h>
+CUdevice cudaDevice;
+
+#include <nvEncodeAPI.h>
+NV_ENCODE_API_FUNCTION_LIST nvenc = { 0 };
+#endif
 
 #include <vorbis/codec.h>
 #include <vorbis/vorbisenc.h>
@@ -259,6 +269,42 @@ exSDKStartup(
 		info[1] = kPrTrue; // one spot past isCacheable
 	#endif
 	}
+
+#ifdef WEBM_HAVE_NVENC
+	int driverVersion = 0;
+	cudaError_t cudaErr = cudaDriverGetVersion(&driverVersion);
+
+	if(cudaErr == cudaSuccess && driverVersion >= CUDART_VERSION)
+	{
+		int deviceNum = -1;
+		cudaErr = cudaGetDevice(&deviceNum);
+
+		if(cudaErr == cudaSuccess)
+		{
+			CUresult cuErr = cuDeviceGet(&cudaDevice, deviceNum);
+
+			if(cuErr == CUDA_SUCCESS)
+			{
+				assert(nvenc.version == 0);
+
+				const uint32_t sdkVersion = (NVENCAPI_MAJOR_VERSION << 4) | NVENCAPI_MINOR_VERSION;
+
+				uint32_t version = 0;
+				NVENCSTATUS nverr = NvEncodeAPIGetMaxSupportedVersion(&version);
+
+				if(nverr == NV_ENC_SUCCESS && sdkVersion <= version)
+				{
+					nvenc.version = NV_ENCODE_API_FUNCTION_LIST_VER;
+
+					nverr = NvEncodeAPICreateInstance(&nvenc);
+
+					if(nverr != NV_ENC_SUCCESS)
+						nvenc.version = 0;
+				}
+			}
+		}
+	}
+#endif
 
 	return malNoError;
 }
@@ -840,6 +886,78 @@ CopyPixToAOMImg(aom_image_t *img, aom_image_t *alpha_img, const PPixHand &outFra
 }
 
 
+#ifdef WEBM_HAVE_NVENC
+static void
+CopyPixToNVENCBuf(void *bufferDataPtr, uint32_t width, uint32_t height, uint32_t pitch, NV_ENC_BUFFER_FORMAT format, const PPixHand &outFrame, PrSDKPPixSuite *pixSuite, PrSDKPPix2Suite *pix2Suite)
+{
+	vpx_image_t vpx_img;
+
+	assert(format != NV_ENC_BUFFER_FORMAT_NV12);
+
+	vpx_img.fmt = (format == NV_ENC_BUFFER_FORMAT_YV12 ? VPX_IMG_FMT_YV12 :
+					format == NV_ENC_BUFFER_FORMAT_IYUV ? VPX_IMG_FMT_I420 :
+					format == NV_ENC_BUFFER_FORMAT_YUV444 ? VPX_IMG_FMT_I444 :
+					format == NV_ENC_BUFFER_FORMAT_YUV420_10BIT ? VPX_IMG_FMT_I42016 :
+					format == NV_ENC_BUFFER_FORMAT_YUV444_10BIT ? VPX_IMG_FMT_I44416 :
+					VPX_IMG_FMT_NONE);
+
+	assert(vpx_img.fmt != VPX_IMG_FMT_NONE && vpx_img.fmt != VPX_IMG_FMT_YV12);
+
+	vpx_img.d_w = vpx_img.w = width;
+	vpx_img.d_h = vpx_img.h = height;
+
+	vpx_img.bit_depth = (format == NV_ENC_BUFFER_FORMAT_YUV420_10BIT || format == NV_ENC_BUFFER_FORMAT_YUV444_10BIT) ? 10 : 8;
+
+	const bool subsampled = !(format == NV_ENC_BUFFER_FORMAT_YUV444 || format == NV_ENC_BUFFER_FORMAT_YUV444_10BIT);
+
+	vpx_img.x_chroma_shift = (subsampled ? 1 : 0);
+	vpx_img.y_chroma_shift = (subsampled ? 1 : 0);
+
+	vpx_img.stride[VPX_PLANE_Y] = (pitch * (vpx_img.bit_depth > 8 ? 2 : 1));
+	vpx_img.stride[VPX_PLANE_U] = (pitch * (vpx_img.bit_depth > 8 ? 2 : 1) / (subsampled ? 2 : 1));
+	vpx_img.stride[VPX_PLANE_V] = vpx_img.stride[VPX_PLANE_U];
+
+	unsigned char *planarYUV = (unsigned char *)bufferDataPtr;
+
+	if(format == NV_ENC_BUFFER_FORMAT_YUV420_10BIT)
+	{
+		// semi-planar?!?
+		planarYUV = (unsigned char *)malloc((vpx_img.stride[VPX_PLANE_Y] * height) + (vpx_img.stride[VPX_PLANE_U] * height / 2) + (vpx_img.stride[VPX_PLANE_V] * height / 2));
+
+		if(planarYUV = NULL)
+			return;
+	}
+
+	vpx_img.planes[VPX_PLANE_Y] = (unsigned char *)planarYUV;
+	vpx_img.planes[VPX_PLANE_U] = vpx_img.planes[VPX_PLANE_Y] + (vpx_img.stride[VPX_PLANE_Y] * height);
+	vpx_img.planes[VPX_PLANE_V] = vpx_img.planes[VPX_PLANE_U] + (vpx_img.stride[VPX_PLANE_U] * height / (subsampled ? 2 : 1));
+
+	CopyPixToVPXImg(&vpx_img, NULL, outFrame, pixSuite, pix2Suite);
+
+	if(format == NV_ENC_BUFFER_FORMAT_YUV420_10BIT)
+	{
+		unsigned char* semiPlanarYUV = (unsigned char*)bufferDataPtr;
+
+		memcpy(semiPlanarYUV, planarYUV, vpx_img.stride[VPX_PLANE_Y] * height);
+
+		for(int y=0; y < (height / 2); y++)
+		{
+			unsigned short *pixUV = (unsigned short *)(semiPlanarYUV + (vpx_img.stride[VPX_PLANE_Y] * height) + (sizeof(unsigned short) * 2 * pitch * y));
+			const unsigned short *pixU = (const unsigned short *)(vpx_img.planes[VPX_PLANE_U] + (vpx_img.stride[VPX_PLANE_U] * y));
+			const unsigned short *pixV = (const unsigned short *)(vpx_img.planes[VPX_PLANE_V] + (vpx_img.stride[VPX_PLANE_V] * y));
+
+			for (int x=0; y < (width / 2); x++)
+			{
+				*pixUV++ = *pixU++;
+				*pixUV++ = *pixV++;
+			}
+		}
+
+		free(planarYUV);
+	}
+}
+#endif // WEBM_HAVE_NVENC
+
 static void
 vorbis_get_limits(int audioChannels, float sampleRate, long &min_bitrate, long &max_bitrate)
 {
@@ -1171,6 +1289,7 @@ exSDKExport(
 	
 	const WebM_Video_Codec video_codec = (WebM_Video_Codec)videoCodecP.value.intValue;
 	const bool use_vp8 = (video_codec == WEBM_CODEC_VP8);
+	AV1_Codec av1_codec = AV1_CODEC_NVENC;
 	const WebM_Video_Method method = (WebM_Video_Method)methodP.value.intValue;
 	const WebM_Chroma_Sampling chroma = (use_vp8 ? WEBM_420 : (WebM_Chroma_Sampling)samplingP.value.intValue);
 	const int bit_depth = (use_vp8 ? 8 : bitDepthP.value.intValue);
@@ -1282,22 +1401,10 @@ exSDKExport(
 	{
 		const bool vbr_pass = (passes > 1 && pass == 0);
 		
-		if(passes > 1)
-		{
-			prUTF16Char utf_str[256];
-		
-			if(vbr_pass)
-				utf16ncpy(utf_str, "Analyzing video", 255);
-			else
-				utf16ncpy(utf_str, "Encoding WebM movie", 255);
-			
-			mySettings->exportProgressSuite->SetProgressString(exID, utf_str);
-		}
-		
-		
 		exRatioValue fps;
 		get_framerate(ticksPerSecond, frameRateP.value.timeValue, &fps);
 		
+		std::string codecMessage;
 		
 		vpx_codec_err_t vpx_codec_err = VPX_CODEC_OK;
 		
@@ -1320,6 +1427,20 @@ exSDKExport(
 		aom_codec_iter_t aom_alpha_encoder_iter = NULL;
 		std::queue<aom_codec_cx_pkt_t> aom_alpha_encoder_queue;
 		
+
+	#ifdef WEBM_HAVE_NVENC
+		CUcontext cudaContext = NULL;
+
+		NVENCSTATUS nv_err = NV_ENC_SUCCESS;
+		void *nvEncoder = NULL;
+
+		NV_ENC_BUFFER_FORMAT nv_input_format = NV_ENC_BUFFER_FORMAT_UNDEFINED;
+		int nv_input_buffer_idx = 0;
+		std::vector<NV_ENC_INPUT_PTR> nv_input_buffers;
+		bool nv_output_available = false;
+		int nv_output_buffer_idx = 0;
+		std::vector<NV_ENC_OUTPUT_PTR> nv_output_buffers;
+	#endif
 		
 		const uint64_t alpha_id = 1;
 		
@@ -1488,156 +1609,567 @@ exSDKExport(
 			{
 				assert(video_codec == WEBM_CODEC_AV1);
 				
-				aom_codec_iface_t *iface = aom_codec_av1_cx();
-				
-				aom_codec_enc_cfg_t config;
-				aom_codec_enc_config_default(iface, &config, AOM_USAGE_GOOD_QUALITY);
-				
-				config.g_w = renderParms.inWidth;
-				config.g_h = renderParms.inHeight;
-				
-				// Profile 0 (Main) can do 8- and 10-bit 4:2:0 and 4:0:0 (monochrome)
-				// Profile 1 (High) adds 4:4:4
-				// Profile 2 (Professional) adds 12-bit and 4:2:2
-				config.g_profile = (bit_depth == 12 || chroma == WEBM_422) ? 2 :
-									chroma == WEBM_444 ? 1 : 0;
-				
-				config.g_bit_depth = (bit_depth == 12 ? AOM_BITS_12 :
-										bit_depth == 10 ? AOM_BITS_10 :
-										AOM_BITS_8);
-				
-				config.g_input_bit_depth = config.g_bit_depth;
-				
-				
-				if(method == WEBM_METHOD_CONSTANT_QUALITY || method == WEBM_METHOD_CONSTRAINED_QUALITY)
+				const AV1_Codec fallback_codec = AV1_CODEC_AOM;
+
+				if(av1_codec == AV1_CODEC_NVENC && (chroma != WEBM_420 || bit_depth > 10))
 				{
-					config.rc_end_usage = (method == WEBM_METHOD_CONSTANT_QUALITY ? AOM_Q : AOM_CQ);
-					config.g_pass = AOM_RC_ONE_PASS;
-					
-					const int min_q = config.rc_min_quantizer + 1;
-					const int max_q = config.rc_max_quantizer;
-					
-					// our 0...100 slider will be used to bring max_q down to min_q
-					config.rc_max_quantizer = min_q + ((((float)(100 - videoQualityP.value.intValue) / 100.f) * (max_q - min_q)) + 0.5f);
+					codecMessage = "Incompatible NVENC pixel settings";
+
+					av1_codec = fallback_codec;
 				}
-				else
+
+				if(av1_codec == AV1_CODEC_NVENC)
 				{
-					if(method == WEBM_METHOD_VBR)
+				#ifdef WEBM_HAVE_NVENC
+					assert(passes == 1); // not ready yet
+					assert(!use_alpha);
+
+					if(nvenc.version != 0)
 					{
-						config.rc_end_usage = AOM_VBR;
-					}
-					else if(method == WEBM_METHOD_BITRATE)
-					{
-						config.rc_end_usage = AOM_CBR;
-						config.g_pass = AOM_RC_ONE_PASS;
+						CUresult cuErr = cuCtxCreate(&cudaContext, CU_CTX_SCHED_AUTO, cudaDevice);
+
+						if(cuErr == CUDA_SUCCESS)
+						{
+							assert(cudaContext != NULL);
+
+							NV_ENC_OPEN_ENCODE_SESSION_EX_PARAMS sessionParams = { 0 };
+
+							sessionParams.version = NV_ENC_OPEN_ENCODE_SESSION_EX_PARAMS_VER;
+							sessionParams.deviceType = NV_ENC_DEVICE_TYPE_CUDA;
+							sessionParams.device = cudaContext;
+							sessionParams.apiVersion = NVENCAPI_VERSION;
+
+							nv_err = nvenc.nvEncOpenEncodeSessionEx(&sessionParams, &nvEncoder);
+
+							if(nv_err == NV_ENC_SUCCESS)
+							{
+								const GUID codecGUID = NV_ENC_CODEC_AV1_GUID;
+
+								bool have_codec = false;
+
+								uint32_t codec_count = 0;
+								nv_err = nvenc.nvEncGetEncodeGUIDCount(nvEncoder, &codec_count);
+
+								if(nv_err == NV_ENC_SUCCESS && codec_count > 0)
+								{
+									GUID *guids = new GUID[codec_count];
+
+									uint32_t codec_count_again = 0;
+
+									nv_err = nvenc.nvEncGetEncodeGUIDs(nvEncoder, guids, codec_count, &codec_count_again);
+
+									assert(codec_count_again == codec_count);
+
+									for(int i=0; i < codec_count && nv_err == NV_ENC_SUCCESS && !have_codec; i++)
+									{
+										if(guids[i] == codecGUID)
+											have_codec = true;
+									}
+
+									delete[] guids;
+								}
+
+
+								const GUID profileGUID = NV_ENC_AV1_PROFILE_MAIN_GUID;
+
+								bool have_profile = false;
+
+								if(have_codec)
+								{
+									uint32_t profile_count = 0;
+
+									nv_err = nvenc.nvEncGetEncodeProfileGUIDCount(nvEncoder, codecGUID, &profile_count);
+
+									if(nv_err == NV_ENC_SUCCESS && profile_count > 0)
+									{
+										GUID *guids = new GUID[profile_count];
+
+										uint32_t profile_count_again = 0;
+
+										nv_err = nvenc.nvEncGetEncodeProfileGUIDs(nvEncoder, codecGUID, guids, profile_count, &profile_count_again);
+
+										assert(profile_count_again == profile_count);
+
+										for(int i=0; i < profile_count && nv_err == NV_ENC_SUCCESS && !have_profile; i++)
+										{
+											if (guids[i] == profileGUID)
+												have_profile = true;
+										}
+
+										delete[] guids;
+									}
+								}
+
+
+								nv_input_format = (chroma == WEBM_444) ? (bit_depth == 10 ? NV_ENC_BUFFER_FORMAT_YUV444_10BIT : NV_ENC_BUFFER_FORMAT_YUV444) :
+																		(bit_depth == 10 ? NV_ENC_BUFFER_FORMAT_YUV420_10BIT : NV_ENC_BUFFER_FORMAT_IYUV);
+
+								bool have_input_format = false;
+
+								if(have_codec && have_profile)
+								{
+									uint32_t format_count = 0;
+
+									nv_err = nvenc.nvEncGetInputFormatCount(nvEncoder, codecGUID, &format_count);
+
+									if(nv_err == NV_ENC_SUCCESS && format_count > 0)
+									{
+										bool have_nv12 = false;
+										bool have_yv12 = false;
+										bool have_iyuv = false;
+										bool have_yuv444 = false;
+										bool have_yuv420_10bit = false;
+										bool have_yuv444_10bit = false;
+										bool have_argb = false;
+										bool have_argb10 = false;
+										bool have_ayuv = false;
+										bool have_abgr = false;
+										bool have_abgr10 = false;
+										bool have_u8 = false;
+
+										NV_ENC_BUFFER_FORMAT *formats = new NV_ENC_BUFFER_FORMAT[format_count];
+
+										uint32_t format_count_again = 0;
+
+										nv_err = nvenc.nvEncGetInputFormats(nvEncoder, codecGUID, formats, format_count, &format_count_again);
+
+										assert(format_count_again == format_count);
+
+										for(int i=0; i < format_count && nv_err == NV_ENC_SUCCESS; i++)
+										{
+											const NV_ENC_BUFFER_FORMAT &format = formats[i];
+
+											if(format == NV_ENC_BUFFER_FORMAT_NV12)
+												have_nv12 = true;
+											else if(format == NV_ENC_BUFFER_FORMAT_YV12)
+												have_yv12 = true;
+											else if(format == NV_ENC_BUFFER_FORMAT_IYUV)
+												have_iyuv = true;
+											else if(format == NV_ENC_BUFFER_FORMAT_YUV444)
+												have_yuv444 = true;
+											else if(format == NV_ENC_BUFFER_FORMAT_YUV420_10BIT)
+												have_yuv420_10bit = true;
+											else if(format == NV_ENC_BUFFER_FORMAT_YUV444_10BIT)
+												have_yuv444_10bit = true;
+											else if(format == NV_ENC_BUFFER_FORMAT_ARGB)
+												have_argb = true;
+											else if(format == NV_ENC_BUFFER_FORMAT_ARGB10)
+												have_argb10 = true;
+											else if(format == NV_ENC_BUFFER_FORMAT_AYUV)
+												have_ayuv = true;
+											else if(format == NV_ENC_BUFFER_FORMAT_ABGR)
+												have_abgr = true;
+											else if(format == NV_ENC_BUFFER_FORMAT_ABGR10)
+												have_abgr10 = true;
+											else if(format == NV_ENC_BUFFER_FORMAT_U8)
+												have_u8 = true;
+										}
+
+										delete[] formats;
+
+										if(nv_input_format == NV_ENC_BUFFER_FORMAT_IYUV)
+											have_input_format = have_iyuv;
+										else if(nv_input_format == NV_ENC_BUFFER_FORMAT_YUV444)
+											have_input_format = have_yuv444;
+										else if(nv_input_format == NV_ENC_BUFFER_FORMAT_YUV420_10BIT)
+											have_input_format = have_yuv420_10bit;
+										else if(nv_input_format == NV_ENC_BUFFER_FORMAT_YUV444_10BIT)
+											have_input_format = have_yuv444_10bit;
+									}
+								}
+
+
+								const GUID presetGUID = NV_ENC_PRESET_P7_GUID;
+
+								bool have_preset = false;
+
+								if(have_codec && have_profile && have_input_format)
+								{
+									uint32_t preset_count = 0;
+
+									nv_err = nvenc.nvEncGetEncodePresetCount(nvEncoder, codecGUID, &preset_count);
+
+									if(nv_err == NV_ENC_SUCCESS && preset_count > 0)
+									{
+										GUID *guids = new GUID[preset_count];
+
+										uint32_t preset_count_again = 0;
+
+										nv_err = nvenc.nvEncGetEncodeProfileGUIDs(nvEncoder, codecGUID, guids, preset_count, &preset_count_again);
+
+										//assert(preset_count_again == preset_count); // ??
+
+										for(int i=0; i < preset_count_again && nv_err == NV_ENC_SUCCESS && !have_preset; i++)
+										{
+											if (guids[i] == presetGUID)
+												have_preset = true;
+										}
+
+										delete[] guids;
+									}
+								}
+
+								assert(!have_preset); // not sure what's going on here, using NV_ENC_PRESET_P7_GUID anyway
+
+
+								bool have_capabilities = true;
+
+								if(bit_depth == 10)
+								{
+									int can10bit = 0;
+
+									NV_ENC_CAPS_PARAM caps = { 0 };
+									caps.version = NV_ENC_CAPS_PARAM_VER;
+									caps.capsToQuery = NV_ENC_CAPS_SUPPORT_10BIT_ENCODE;
+
+									nvenc.nvEncGetEncodeCaps(nvEncoder, codecGUID, &caps, &can10bit);
+
+									if(!can10bit)
+										have_capabilities = false;
+								}
+
+								if(chroma == WEBM_444)
+								{
+									int can4444 = 0;
+
+									NV_ENC_CAPS_PARAM caps = { 0 };
+									caps.version = NV_ENC_CAPS_PARAM_VER;
+									caps.capsToQuery = NV_ENC_CAPS_SUPPORT_YUV444_ENCODE;
+
+									nvenc.nvEncGetEncodeCaps(nvEncoder, codecGUID, &caps, &can4444);
+
+									if(!can4444)
+										have_capabilities = false;
+								}
+								else if(chroma == WEBM_422)
+								{
+									have_capabilities = false;
+								}
+
+
+								if(nv_err == NV_ENC_SUCCESS && have_codec && have_profile && have_input_format && have_capabilities)
+								{
+									const NV_ENC_TUNING_INFO tuningInfo = NV_ENC_TUNING_INFO_HIGH_QUALITY;
+
+									NV_ENC_PRESET_CONFIG presetConfig = { 0 };
+									presetConfig.version = NV_ENC_PRESET_CONFIG_VER;
+									presetConfig.presetCfg.version = NV_ENC_CONFIG_VER;
+
+									nv_err = nvenc.nvEncGetEncodePresetConfigEx(nvEncoder, codecGUID, presetGUID, tuningInfo, &presetConfig);
+
+									if(nv_err == NV_ENC_SUCCESS)
+									{
+										NV_ENC_CONFIG &config = presetConfig.presetCfg;
+
+										NV_ENC_RC_PARAMS &rcParams = config.rcParams;
+
+										if(method == WEBM_METHOD_CONSTANT_QUALITY || method == WEBM_METHOD_CONSTRAINED_QUALITY)
+										{
+											rcParams.rateControlMode = NV_ENC_PARAMS_RC_CONSTQP;
+
+											rcParams.constQP.qpIntra = rcParams.constQP.qpInterP = rcParams.constQP.qpInterB = (100 - videoQualityP.value.intValue);
+										}
+										else
+										{
+											if(method == WEBM_METHOD_VBR)
+											{
+												rcParams.rateControlMode = NV_ENC_PARAMS_RC_VBR;
+											}
+											else if(method == WEBM_METHOD_BITRATE)
+											{
+												rcParams.rateControlMode = NV_ENC_PARAMS_RC_CBR;
+											}
+											else
+												assert(false);
+
+											rcParams.averageBitRate = bitrateP.value.intValue;
+											rcParams.maxBitRate = rcParams.averageBitRate * 120 / 100;
+										}
+
+										assert(rcParams.multiPass == NV_ENC_MULTI_PASS_DISABLED);
+
+										NV_ENC_CONFIG_AV1 &av1config = config.encodeCodecConfig.av1Config;
+
+										assert(av1config.chromaFormatIDC == 1); // 4:2:0, 4:4:4 currently not supported
+										av1config.inputBitDepth = (bit_depth == 10 ? NV_ENC_BIT_DEPTH_10 : NV_ENC_BIT_DEPTH_8);
+										av1config.outputBitDepth = (bit_depth == 10 ? NV_ENC_BIT_DEPTH_10 : NV_ENC_BIT_DEPTH_8);
+
+										NV_ENC_INITIALIZE_PARAMS params = { 0 };
+
+										params.version = NV_ENC_INITIALIZE_PARAMS_VER;
+										params.encodeGUID = codecGUID;
+										params.presetGUID = presetGUID;
+										params.encodeWidth = renderParms.inWidth;
+										params.encodeHeight = renderParms.inHeight;
+										params.darWidth = renderParms.inWidth * renderParms.inPixelAspectRatioNumerator;
+										params.darHeight = renderParms.inHeight * renderParms.inPixelAspectRatioDenominator;
+										params.frameRateNum = fps.numerator;
+										params.frameRateDen = fps.denominator;
+										params.enableEncodeAsync = FALSE;
+										params.enablePTD = TRUE;
+										params.reportSliceOffsets = FALSE;
+										params.enableSubFrameWrite = FALSE;
+										params.enableExternalMEHints = FALSE;
+										params.enableMEOnlyMode = FALSE;
+										params.enableWeightedPrediction = FALSE;
+										params.splitEncodeMode = FALSE;
+										params.enableOutputInVidmem = FALSE;
+										params.enableReconFrameOutput = FALSE;
+										params.enableOutputStats = FALSE;
+										params.enableUniDirectionalB = FALSE;
+										params.privDataSize = 0;
+										params.reserved = 0;
+										params.privData = NULL;
+										params.encodeConfig = &config;
+										params.maxEncodeWidth = 0;
+										params.maxEncodeHeight = 0;
+										params.tuningInfo = tuningInfo;
+										params.bufferFormat = NV_ENC_BUFFER_FORMAT_UNDEFINED; // only for DX12
+										params.outputStatsLevel = NV_ENC_OUTPUT_STATS_NONE;
+
+										nv_err = nvenc.nvEncInitializeEncoder(nvEncoder, &params);
+
+										if(nv_err == NV_ENC_SUCCESS)
+										{
+											const int num_buffers = std::min(64, keyframeMaxDistanceP.value.intValue * 4);
+
+											for(int i=0; i < num_buffers && nv_err == NV_ENC_SUCCESS; i++)
+											{
+												NV_ENC_CREATE_INPUT_BUFFER input_params = { 0 };
+
+												input_params.version = NV_ENC_CREATE_INPUT_BUFFER_VER;
+												input_params.width = params.encodeWidth;
+												input_params.height = params.encodeHeight;
+												input_params.bufferFmt = nv_input_format;
+												input_params.inputBuffer = NULL;
+												input_params.pSysMemBuffer = NULL;
+
+												nv_err = nvenc.nvEncCreateInputBuffer(nvEncoder, &input_params);
+
+												if(nv_err == NV_ENC_SUCCESS)
+												{
+													nv_input_buffers.push_back(input_params.inputBuffer);
+
+													NV_ENC_CREATE_BITSTREAM_BUFFER output_params = { 0 };
+
+													output_params.version = NV_ENC_CREATE_BITSTREAM_BUFFER_VER;
+													output_params.reserved = 0;
+													output_params.bitstreamBuffer = NULL;
+
+													nv_err = nvenc.nvEncCreateBitstreamBuffer(nvEncoder, &output_params);
+
+													if(nv_err == NV_ENC_SUCCESS)
+													{
+														nv_output_buffers.push_back(output_params.bitstreamBuffer);
+													}
+												}
+											}
+										}
+									}
+								}
+								else
+								{
+									codecMessage = "NVENC insufficient capabilities";
+
+									av1_codec = fallback_codec;
+								}
+							}
+
+							if(nv_err != NV_ENC_SUCCESS)
+							{
+								codecMessage = "Failed to initialize NVENC encoder";
+
+								av1_codec = fallback_codec;
+							}
+						}
+						else
+						{
+							codecMessage = "Failed to create CUDA context";
+
+							av1_codec = fallback_codec;
+						}
 					}
 					else
-						assert(false);
-				}
-				
-				if(passes == 2)
-				{
-					if(vbr_pass)
 					{
-						config.g_pass = AOM_RC_FIRST_PASS;
+						codecMessage = "NVENC codec not available";
+
+						av1_codec = fallback_codec;
 					}
-					else
-					{
-						config.g_pass = AOM_RC_LAST_PASS;
-						
-						config.rc_twopass_stats_in.buf = vbr_buffer;
-						config.rc_twopass_stats_in.sz = vbr_buffer_size;
-					}
+				#else
+					codecMessage = "NVENC codec not available";
+
+					av1_codec = fallback_codec;
+				#endif // WEBM_HAVE_NVENC
 				}
-				else
-					config.g_pass = AOM_RC_ONE_PASS;
-					
-				
-				config.rc_target_bitrate = bitrateP.value.intValue;
-				
-				
-				config.g_threads = g_num_cpus;
-				
-				config.g_timebase.num = fps.denominator;
-				config.g_timebase.den = fps.numerator;
-				
-				config.kf_max_dist = keyframeMaxDistanceP.value.intValue;
-				
-				
-				ConfigureAOMEncoderPre(config, customArgs);
-				
-				assert(config.kf_max_dist >= config.kf_min_dist);
-				
-				
-				aom_codec_enc_cfg_t alpha_config = config;
-				
-				if(use_alpha)
+
+				if(av1_codec == AV1_CODEC_AOM)
 				{
-					alpha_config.monochrome = 1;
-				
-					alpha_config.g_profile = (bit_depth == 12 ? 2 : 0);
-				
-					alpha_config.kf_min_dist = alpha_config.kf_max_dist = config.kf_min_dist = config.kf_max_dist;
-					
-					alpha_config.rc_target_bitrate = config.rc_target_bitrate / 3;
-					
-					config.rc_target_bitrate = config.rc_target_bitrate * 2 / 3;
-					
-					if(passes == 2 && !vbr_pass)
-					{
-						config.rc_twopass_stats_in.buf = alpha_vbr_buffer;
-						config.rc_twopass_stats_in.sz = alpha_vbr_buffer_size;
-					}
-				}
-				
-				
-				const aom_codec_flags_t flags = (config.g_bit_depth == AOM_BITS_8 ? 0 : AOM_CODEC_USE_HIGHBITDEPTH);
-				
-				aom_codec_err = aom_codec_enc_init(&aom_encoder, iface, &config, flags);
-				
-				if(use_alpha && aom_codec_err == AOM_CODEC_OK)
-				{
-					aom_codec_err = aom_codec_enc_init(&aom_alpha_encoder, iface, &alpha_config, flags);
-				}
-				
-				
-				if(aom_codec_err == AOM_CODEC_OK)
-				{
+					aom_codec_iface_t* iface = aom_codec_av1_cx();
+
+					aom_codec_enc_cfg_t config;
+					aom_codec_enc_config_default(iface, &config, AOM_USAGE_GOOD_QUALITY);
+
+					config.g_w = renderParms.inWidth;
+					config.g_h = renderParms.inHeight;
+
+					// Profile 0 (Main) can do 8- and 10-bit 4:2:0 and 4:0:0 (monochrome)
+					// Profile 1 (High) adds 4:4:4
+					// Profile 2 (Professional) adds 12-bit and 4:2:2
+					config.g_profile = (bit_depth == 12 || chroma == WEBM_422) ? 2 :
+										chroma == WEBM_444 ? 1 : 0;
+
+					config.g_bit_depth = (bit_depth == 12 ? AOM_BITS_12 :
+											bit_depth == 10 ? AOM_BITS_10 :
+											AOM_BITS_8);
+
+					config.g_input_bit_depth = config.g_bit_depth;
+
+
 					if(method == WEBM_METHOD_CONSTANT_QUALITY || method == WEBM_METHOD_CONSTRAINED_QUALITY)
 					{
-						const int min_q = config.rc_min_quantizer;
+						config.rc_end_usage = (method == WEBM_METHOD_CONSTANT_QUALITY ? AOM_Q : AOM_CQ);
+						config.g_pass = AOM_RC_ONE_PASS;
+
+						const int min_q = config.rc_min_quantizer + 1;
 						const int max_q = config.rc_max_quantizer;
-						
-						// CQ Level should be between min_q and max_q
-						const int cq_level = (min_q + max_q) / 2;
-					
-						aom_codec_control(&aom_encoder, AOME_SET_CQ_LEVEL, cq_level);
-						
-						if(use_alpha)
-							aom_codec_control(&aom_alpha_encoder, AOME_SET_CQ_LEVEL, cq_level);
+
+						// our 0...100 slider will be used to bring max_q down to min_q
+						config.rc_max_quantizer = min_q + ((((float)(100 - videoQualityP.value.intValue) / 100.f) * (max_q - min_q)) + 0.5f);
 					}
-					
-					aom_codec_control(&aom_encoder, AOME_SET_CPUUSED, 2); // much faster if we do this
-					
-					aom_codec_control(&aom_encoder, AV1E_SET_TILE_COLUMNS, mylog2(g_num_cpus)); // this gives us some multithreading
-					aom_codec_control(&aom_encoder, AV1E_SET_FRAME_PARALLEL_DECODING, 1);
-					
+					else
+					{
+						if(method == WEBM_METHOD_VBR)
+						{
+							config.rc_end_usage = AOM_VBR;
+						}
+						else if(method == WEBM_METHOD_BITRATE)
+						{
+							config.rc_end_usage = AOM_CBR;
+							config.g_pass = AOM_RC_ONE_PASS;
+						}
+						else
+							assert(false);
+					}
+
+					if(passes == 2)
+					{
+						if(vbr_pass)
+						{
+							config.g_pass = AOM_RC_FIRST_PASS;
+						}
+						else
+						{
+							config.g_pass = AOM_RC_LAST_PASS;
+
+							config.rc_twopass_stats_in.buf = vbr_buffer;
+							config.rc_twopass_stats_in.sz = vbr_buffer_size;
+						}
+					}
+					else
+						config.g_pass = AOM_RC_ONE_PASS;
+
+
+					config.rc_target_bitrate = bitrateP.value.intValue;
+
+
+					config.g_threads = g_num_cpus;
+
+					config.g_timebase.num = fps.denominator;
+					config.g_timebase.den = fps.numerator;
+
+					config.kf_max_dist = keyframeMaxDistanceP.value.intValue;
+
+
+					ConfigureAOMEncoderPre(config, customArgs);
+
+					assert(config.kf_max_dist >= config.kf_min_dist);
+
+
+					aom_codec_enc_cfg_t alpha_config = config;
+
 					if(use_alpha)
 					{
-						aom_codec_control(&aom_alpha_encoder, AOME_SET_CPUUSED, 2);
-						
-						aom_codec_control(&aom_alpha_encoder, AV1E_SET_TILE_COLUMNS, mylog2(g_num_cpus));
-						aom_codec_control(&aom_alpha_encoder, AV1E_SET_FRAME_PARALLEL_DECODING, 1);
+						alpha_config.monochrome = 1;
+
+						alpha_config.g_profile = (bit_depth == 12 ? 2 : 0);
+
+						alpha_config.kf_min_dist = alpha_config.kf_max_dist = config.kf_min_dist = config.kf_max_dist;
+
+						alpha_config.rc_target_bitrate = config.rc_target_bitrate / 3;
+
+						config.rc_target_bitrate = config.rc_target_bitrate * 2 / 3;
+
+						if(passes == 2 && !vbr_pass)
+						{
+							config.rc_twopass_stats_in.buf = alpha_vbr_buffer;
+							config.rc_twopass_stats_in.sz = alpha_vbr_buffer_size;
+						}
 					}
-				
-					ConfigureAOMEncoderPost(&aom_encoder, customArgs);
-					
-					if(use_alpha)
-						ConfigureAOMEncoderPost(&aom_alpha_encoder, customArgs);
+
+
+					const aom_codec_flags_t flags = (config.g_bit_depth == AOM_BITS_8 ? 0 : AOM_CODEC_USE_HIGHBITDEPTH);
+
+					aom_codec_err = aom_codec_enc_init(&aom_encoder, iface, &config, flags);
+
+					if(use_alpha && aom_codec_err == AOM_CODEC_OK)
+					{
+						aom_codec_err = aom_codec_enc_init(&aom_alpha_encoder, iface, &alpha_config, flags);
+					}
+
+
+					if(aom_codec_err == AOM_CODEC_OK)
+					{
+						if(method == WEBM_METHOD_CONSTANT_QUALITY || method == WEBM_METHOD_CONSTRAINED_QUALITY)
+						{
+							const int min_q = config.rc_min_quantizer;
+							const int max_q = config.rc_max_quantizer;
+
+							// CQ Level should be between min_q and max_q
+							const int cq_level = (min_q + max_q) / 2;
+
+							aom_codec_control(&aom_encoder, AOME_SET_CQ_LEVEL, cq_level);
+
+							if(use_alpha)
+								aom_codec_control(&aom_alpha_encoder, AOME_SET_CQ_LEVEL, cq_level);
+						}
+
+						aom_codec_control(&aom_encoder, AOME_SET_CPUUSED, 2); // much faster if we do this?
+
+						aom_codec_control(&aom_encoder, AV1E_SET_TILE_COLUMNS, mylog2(g_num_cpus)); // this gives us some multithreading
+						aom_codec_control(&aom_encoder, AV1E_SET_FRAME_PARALLEL_DECODING, 1);
+
+						if(use_alpha)
+						{
+							aom_codec_control(&aom_alpha_encoder, AOME_SET_CPUUSED, 2);
+
+							aom_codec_control(&aom_alpha_encoder, AV1E_SET_TILE_COLUMNS, mylog2(g_num_cpus));
+							aom_codec_control(&aom_alpha_encoder, AV1E_SET_FRAME_PARALLEL_DECODING, 1);
+						}
+
+						ConfigureAOMEncoderPost(&aom_encoder, customArgs);
+
+						if(use_alpha)
+							ConfigureAOMEncoderPost(&aom_alpha_encoder, customArgs);
+					}
 				}
 			}
 		}
-		
+
+
+		if(passes > 1 || !codecMessage.empty())
+		{
+			std::string msg = (vbr_pass ? "Analyzing video" : "Encoding WebM movie");
+
+			if (!codecMessage.empty())
+				msg += ", " + codecMessage;
+
+			prUTF16Char utf_str[256];
+
+			utf16ncpy(utf_str, codecMessage.c_str(), 255);
+
+			mySettings->exportProgressSuite->SetProgressString(exID, utf_str);
+		}
+
 	
 	#define OV_OK 0
 	
@@ -1921,10 +2453,40 @@ exSDKExport(
 					
 					if(video_codec == WEBM_CODEC_AV1)
 					{
-						aom_fixed_buf_t *privateH = aom_codec_get_global_headers(&aom_encoder);
-						
-						if(privateH != NULL)
-							video->SetCodecPrivate((const uint8_t *)privateH->buf, privateH->sz);
+						if(av1_codec == AV1_CODEC_AOM)
+						{
+							aom_fixed_buf_t* privateH = aom_codec_get_global_headers(&aom_encoder);
+
+							if(privateH != NULL)
+								video->SetCodecPrivate((const uint8_t*)privateH->buf, privateH->sz);
+						}
+					#ifdef WEBM_HAVE_NVENC
+						else if(av1_codec == AV1_CODEC_NVENC)
+						{
+							void *privateP = malloc(NV_MAX_SEQ_HDR_LEN);
+
+							if(privateP != NULL)
+							{
+								uint32_t payloadSize = 0;
+
+								NV_ENC_SEQUENCE_PARAM_PAYLOAD payload = { 0 };
+
+								payload.version = NV_ENC_SEQUENCE_PARAM_PAYLOAD_VER;
+								payload.inBufferSize = NV_MAX_SEQ_HDR_LEN;
+								payload.spsId = 0;
+								payload.ppsId = 0;
+								payload.spsppsBuffer = privateP;
+								payload.outSPSPPSPayloadSize = &payloadSize;
+
+								NVENCSTATUS err = nvenc.nvEncGetSequenceParams(nvEncoder, &payload);
+
+								if(err == NV_ENC_SUCCESS)
+									video->SetCodecPrivate((const uint8_t*)privateP, payloadSize);
+
+								free(privateP);
+							}
+						}
+					#endif // WEBM_HAVE_NVENC
 					}
 											
 					if(renderParms.inPixelAspectRatioNumerator != renderParms.inPixelAspectRatioDenominator)
@@ -2256,48 +2818,59 @@ exSDKExport(
 						{
 							assert(video_codec == WEBM_CODEC_AV1);
 							
-							while(const aom_codec_cx_pkt_t *pkt = aom_codec_get_cx_data(&aom_encoder, &aom_encoder_iter))
+							if(av1_codec == AV1_CODEC_AOM)
 							{
-								if(vbr_pass)
+								while(const aom_codec_cx_pkt_t* pkt = aom_codec_get_cx_data(&aom_encoder, &aom_encoder_iter))
 								{
-									if(pkt->kind == AOM_CODEC_STATS_PKT)
+									if(vbr_pass)
 									{
-										aom_codec_cx_pkt_t q_pkt = *pkt;
-
-										if(copy_buffers)
+										if(pkt->kind == AOM_CODEC_STATS_PKT)
 										{
-											q_pkt.data.twopass_stats.buf = malloc(q_pkt.data.twopass_stats.sz);
-											if(q_pkt.data.twopass_stats.buf == NULL)
-												throw exportReturn_ErrMemory;
-											memcpy(q_pkt.data.twopass_stats.buf, pkt->data.twopass_stats.buf, q_pkt.data.twopass_stats.sz);
-										}
+											aom_codec_cx_pkt_t q_pkt = *pkt;
 
-										aom_encoder_queue.push(q_pkt);
+											if(copy_buffers)
+											{
+												q_pkt.data.twopass_stats.buf = malloc(q_pkt.data.twopass_stats.sz);
+												if(q_pkt.data.twopass_stats.buf == NULL)
+													throw exportReturn_ErrMemory;
+												memcpy(q_pkt.data.twopass_stats.buf, pkt->data.twopass_stats.buf, q_pkt.data.twopass_stats.sz);
+											}
+
+											aom_encoder_queue.push(q_pkt);
+										}
 									}
-								}
-								else
-								{
-									if(pkt->kind == AOM_CODEC_CX_FRAME_PKT)
+									else
 									{
-										aom_codec_cx_pkt_t q_pkt = *pkt;
-
-										if(copy_buffers)
+										if(pkt->kind == AOM_CODEC_CX_FRAME_PKT)
 										{
-											q_pkt.data.frame.buf = malloc(q_pkt.data.frame.sz);
-											if(q_pkt.data.frame.buf == NULL)
-												throw exportReturn_ErrMemory;
-											memcpy(q_pkt.data.frame.buf, pkt->data.frame.buf, q_pkt.data.frame.sz);
+											aom_codec_cx_pkt_t q_pkt = *pkt;
+
+											if(copy_buffers)
+											{
+												q_pkt.data.frame.buf = malloc(q_pkt.data.frame.sz);
+												if(q_pkt.data.frame.buf == NULL)
+													throw exportReturn_ErrMemory;
+												memcpy(q_pkt.data.frame.buf, pkt->data.frame.buf, q_pkt.data.frame.sz);
+											}
+
+											aom_encoder_queue.push(q_pkt);
 										}
-
-										aom_encoder_queue.push(q_pkt);
 									}
-								}
-								
-								assert(pkt->kind != VPX_CODEC_FPMB_STATS_PKT); // don't know what to do with this
 
-								if(!copy_buffers)
-									break;
+									assert(pkt->kind != VPX_CODEC_FPMB_STATS_PKT); // don't know what to do with this
+
+									if(!copy_buffers)
+										break;
+								}
 							}
+						#ifdef WEBM_HAVE_NVENC
+							else if(av1_codec == AV1_CODEC_NVENC)
+							{
+
+							}
+						#endif // WEBM_HAVE_NVENC
+							else
+								assert(false);
 						}
 						
 						if(use_alpha)
@@ -2340,35 +2913,46 @@ exSDKExport(
 							{
 								assert(video_codec == WEBM_CODEC_AV1);
 								
-								while(const aom_codec_cx_pkt_t *pkt = aom_codec_get_cx_data(&aom_alpha_encoder, &aom_alpha_encoder_iter))
+								if(av1_codec == AV1_CODEC_AOM)
 								{
-									if(vbr_pass)
+									while(const aom_codec_cx_pkt_t* pkt = aom_codec_get_cx_data(&aom_alpha_encoder, &aom_alpha_encoder_iter))
 									{
-										if(pkt->kind == AOM_CODEC_STATS_PKT)
+										if(vbr_pass)
 										{
-											aom_codec_cx_pkt_t q_pkt = *pkt;
-											q_pkt.data.twopass_stats.buf = malloc(q_pkt.data.twopass_stats.sz);
-											if(q_pkt.data.twopass_stats.buf == NULL)
-												throw exportReturn_ErrMemory;
-											memcpy(q_pkt.data.twopass_stats.buf, pkt->data.twopass_stats.buf, q_pkt.data.twopass_stats.sz);
-											aom_alpha_encoder_queue.push(q_pkt);
+											if(pkt->kind == AOM_CODEC_STATS_PKT)
+											{
+												aom_codec_cx_pkt_t q_pkt = *pkt;
+												q_pkt.data.twopass_stats.buf = malloc(q_pkt.data.twopass_stats.sz);
+												if(q_pkt.data.twopass_stats.buf == NULL)
+													throw exportReturn_ErrMemory;
+												memcpy(q_pkt.data.twopass_stats.buf, pkt->data.twopass_stats.buf, q_pkt.data.twopass_stats.sz);
+												aom_alpha_encoder_queue.push(q_pkt);
+											}
 										}
-									}
-									else
-									{
-										if(pkt->kind == AOM_CODEC_CX_FRAME_PKT)
+										else
 										{
-											aom_codec_cx_pkt_t q_pkt = *pkt;
-											q_pkt.data.frame.buf = malloc(q_pkt.data.frame.sz);
-											if(q_pkt.data.frame.buf == NULL)
-												throw exportReturn_ErrMemory;
-											memcpy(q_pkt.data.frame.buf, pkt->data.frame.buf, q_pkt.data.frame.sz);
-											aom_alpha_encoder_queue.push(q_pkt);
+											if(pkt->kind == AOM_CODEC_CX_FRAME_PKT)
+											{
+												aom_codec_cx_pkt_t q_pkt = *pkt;
+												q_pkt.data.frame.buf = malloc(q_pkt.data.frame.sz);
+												if(q_pkt.data.frame.buf == NULL)
+													throw exportReturn_ErrMemory;
+												memcpy(q_pkt.data.frame.buf, pkt->data.frame.buf, q_pkt.data.frame.sz);
+												aom_alpha_encoder_queue.push(q_pkt);
+											}
 										}
+
+										assert(pkt->kind != AOM_CODEC_FPMB_STATS_PKT); // don't know what to do with this
 									}
-									
-									assert(pkt->kind != AOM_CODEC_FPMB_STATS_PKT); // don't know what to do with this
 								}
+							#ifdef WEBM_HAVE_NVENC
+								else if(av1_codec == AV1_CODEC_NVENC)
+								{
+
+								}
+							#endif // WEBM_HAVE_NVENC
+								else
+									assert(false);
 							}
 						}
 						
@@ -2482,103 +3066,165 @@ exSDKExport(
 						{
 							assert(video_codec == WEBM_CODEC_AV1);
 							
-							if(!aom_encoder_queue.empty() && (!use_alpha || !aom_alpha_encoder_queue.empty()))
+							if(av1_codec == AV1_CODEC_AOM)
 							{
-								aom_codec_cx_pkt_t *pkt = NULL;
-								aom_codec_cx_pkt_t *alpha_pkt = NULL;
-							
-								aom_codec_cx_pkt_t pkt_data;
-								aom_codec_cx_pkt_t alpha_pkt_data;
-								
-								pkt_data = aom_encoder_queue.front();
-								pkt = &pkt_data;
-								
-								if(use_alpha)
+								if(!aom_encoder_queue.empty() && (!use_alpha || !aom_alpha_encoder_queue.empty()))
 								{
-									alpha_pkt_data = aom_alpha_encoder_queue.front();
-									alpha_pkt = &alpha_pkt_data;
-								}
-							
-								if(pkt->kind == AOM_CODEC_STATS_PKT)
-								{
-									assert(vbr_pass);
-								
-									if(vbr_buffer_size == 0)
-										vbr_buffer = memorySuite->NewPtr(pkt->data.twopass_stats.sz);
-									else
-										memorySuite->SetPtrSize(&vbr_buffer, vbr_buffer_size + pkt->data.twopass_stats.sz);
-									
-									memcpy(&vbr_buffer[vbr_buffer_size], pkt->data.twopass_stats.buf, pkt->data.twopass_stats.sz);
-									
-									vbr_buffer_size += pkt->data.twopass_stats.sz;
-									
-									made_frame = true;
-									
-									if(use_alpha)
-									{
-										assert(alpha_pkt->kind == AOM_CODEC_STATS_PKT);
-										
-										if(alpha_vbr_buffer_size == 0)
-											alpha_vbr_buffer = memorySuite->NewPtr(alpha_pkt->data.twopass_stats.sz);
-										else
-											memorySuite->SetPtrSize(&alpha_vbr_buffer, alpha_vbr_buffer_size + alpha_pkt->data.twopass_stats.sz);
-										
-										memcpy(&alpha_vbr_buffer[alpha_vbr_buffer_size], alpha_pkt->data.twopass_stats.buf, alpha_pkt->data.twopass_stats.sz);
-										
-										alpha_vbr_buffer_size += alpha_pkt->data.twopass_stats.sz;
-									}
-								}
-								else if(pkt->kind == AOM_CODEC_CX_FRAME_PKT)
-								{
-									assert( !vbr_pass );
-									assert( pkt->data.frame.pts == (videoTime - exportInfoP->startTime) * fps.numerator / (ticksPerSecond * fps.denominator) );
-									assert( pkt->data.frame.duration == 1 ); // because of how we did the timescale
-								
-									if(use_alpha)
-									{
-										assert( alpha_pkt->data.frame.pts == (videoTime - exportInfoP->startTime) * fps.numerator / (ticksPerSecond * fps.denominator) );
-										assert( alpha_pkt->data.frame.duration == 1 );
-										
-										assert(alpha_pkt->kind == AOM_CODEC_CX_FRAME_PKT);
-										
-										if(pkt->data.frame.flags & AOM_FRAME_IS_KEY)
-											assert(alpha_pkt->data.frame.flags & AOM_FRAME_IS_KEY);
-										
-										bool added = muxer_segment->AddFrameWithAdditional((const uint8_t *)pkt->data.frame.buf, pkt->data.frame.sz,
-																							(const uint8_t *)alpha_pkt->data.frame.buf, alpha_pkt->data.frame.sz, alpha_id,
-																							vid_track, timeStamp,
-																							pkt->data.frame.flags & AOM_FRAME_IS_KEY);
-																			
-										made_frame = true;
-										
-										if(!added)
-											result = exportReturn_InternalError;
-									}
-									else
-									{
-										bool added = muxer_segment->AddFrame((const uint8_t *)pkt->data.frame.buf, pkt->data.frame.sz,
-																			vid_track, timeStamp,
-																			pkt->data.frame.flags & AOM_FRAME_IS_KEY);
-																			
-										made_frame = true;
-										
-										if(!added)
-											result = exportReturn_InternalError;
-									}
-								}
-								
-								if(copy_buffers)
-									free(vbr_pass ? pkt_data.data.twopass_stats.buf : pkt_data.data.frame.buf);
+									aom_codec_cx_pkt_t* pkt = NULL;
+									aom_codec_cx_pkt_t* alpha_pkt = NULL;
 
-								aom_encoder_queue.pop();
-								
-								if(use_alpha)
-								{
-									assert(copy_buffers);
-									free(vbr_pass ? alpha_pkt_data.data.twopass_stats.buf : alpha_pkt_data.data.frame.buf);
-									aom_alpha_encoder_queue.pop();
+									aom_codec_cx_pkt_t pkt_data;
+									aom_codec_cx_pkt_t alpha_pkt_data;
+
+									pkt_data = aom_encoder_queue.front();
+									pkt = &pkt_data;
+
+									if(use_alpha)
+									{
+										alpha_pkt_data = aom_alpha_encoder_queue.front();
+										alpha_pkt = &alpha_pkt_data;
+									}
+
+									if(pkt->kind == AOM_CODEC_STATS_PKT)
+									{
+										assert(vbr_pass);
+
+										if(vbr_buffer_size == 0)
+											vbr_buffer = memorySuite->NewPtr(pkt->data.twopass_stats.sz);
+										else
+											memorySuite->SetPtrSize(&vbr_buffer, vbr_buffer_size + pkt->data.twopass_stats.sz);
+
+										memcpy(&vbr_buffer[vbr_buffer_size], pkt->data.twopass_stats.buf, pkt->data.twopass_stats.sz);
+
+										vbr_buffer_size += pkt->data.twopass_stats.sz;
+
+										made_frame = true;
+
+										if(use_alpha)
+										{
+											assert(alpha_pkt->kind == AOM_CODEC_STATS_PKT);
+
+											if(alpha_vbr_buffer_size == 0)
+												alpha_vbr_buffer = memorySuite->NewPtr(alpha_pkt->data.twopass_stats.sz);
+											else
+												memorySuite->SetPtrSize(&alpha_vbr_buffer, alpha_vbr_buffer_size + alpha_pkt->data.twopass_stats.sz);
+
+											memcpy(&alpha_vbr_buffer[alpha_vbr_buffer_size], alpha_pkt->data.twopass_stats.buf, alpha_pkt->data.twopass_stats.sz);
+
+											alpha_vbr_buffer_size += alpha_pkt->data.twopass_stats.sz;
+										}
+									}
+									else if(pkt->kind == AOM_CODEC_CX_FRAME_PKT)
+									{
+										assert(!vbr_pass);
+										assert(pkt->data.frame.pts == (videoTime - exportInfoP->startTime) * fps.numerator / (ticksPerSecond * fps.denominator));
+										assert(pkt->data.frame.duration == 1); // because of how we did the timescale
+
+										if(use_alpha)
+										{
+											assert(alpha_pkt->data.frame.pts == (videoTime - exportInfoP->startTime) * fps.numerator / (ticksPerSecond * fps.denominator));
+											assert(alpha_pkt->data.frame.duration == 1);
+
+											assert(alpha_pkt->kind == AOM_CODEC_CX_FRAME_PKT);
+
+											if(pkt->data.frame.flags & AOM_FRAME_IS_KEY)
+												assert(alpha_pkt->data.frame.flags & AOM_FRAME_IS_KEY);
+
+											bool added = muxer_segment->AddFrameWithAdditional((const uint8_t*)pkt->data.frame.buf, pkt->data.frame.sz,
+																								(const uint8_t*)alpha_pkt->data.frame.buf, alpha_pkt->data.frame.sz, alpha_id,
+																								vid_track, timeStamp,
+																								pkt->data.frame.flags & AOM_FRAME_IS_KEY);
+
+											made_frame = true;
+
+											if(!added)
+												result = exportReturn_InternalError;
+										}
+										else
+										{
+											bool added = muxer_segment->AddFrame((const uint8_t*)pkt->data.frame.buf, pkt->data.frame.sz,
+																					vid_track, timeStamp,
+																					pkt->data.frame.flags & AOM_FRAME_IS_KEY);
+
+											made_frame = true;
+
+											if(!added)
+												result = exportReturn_InternalError;
+										}
+									}
+
+									if(copy_buffers)
+										free(vbr_pass ? pkt_data.data.twopass_stats.buf : pkt_data.data.frame.buf);
+
+									aom_encoder_queue.pop();
+
+									if(use_alpha)
+									{
+										assert(copy_buffers);
+										free(vbr_pass ? alpha_pkt_data.data.twopass_stats.buf : alpha_pkt_data.data.frame.buf);
+										aom_alpha_encoder_queue.pop();
+									}
 								}
 							}
+						#ifdef WEBM_HAVE_NVENC
+							else if(av1_codec == AV1_CODEC_NVENC)
+							{
+								if(nv_output_available)
+								{
+									assert(nv_output_buffer_idx < nv_input_buffer_idx);
+
+									if(vbr_pass)
+									{
+
+									}
+									else
+									{
+										NV_ENC_LOCK_BITSTREAM lock;
+
+										lock.version = NV_ENC_LOCK_BITSTREAM_VER;
+										lock.outputBitstream = nv_output_buffers[nv_output_buffer_idx];
+
+										nv_err = nvenc.nvEncLockBitstream(nvEncoder, &lock);
+
+										if(nv_err == NV_ENC_SUCCESS)
+										{
+											assert(lock.outputTimeStamp == (videoTime - exportInfoP->startTime) * fps.numerator / (ticksPerSecond * fps.denominator));
+											assert(lock.outputDuration == 1);
+
+											bool added = muxer_segment->AddFrame((const uint8_t*)lock.bitstreamBufferPtr, lock.bitstreamSizeInBytes,
+																					vid_track, timeStamp,
+																					lock.pictureType == NV_ENC_PIC_TYPE_I);
+
+											nvenc.nvEncUnlockBitstream(nvEncoder, nv_output_buffers[nv_output_buffer_idx]);
+
+											nv_output_buffer_idx++;
+
+											if(nv_output_buffer_idx == nv_input_buffer_idx)
+											{
+												nv_output_buffer_idx = nv_input_buffer_idx = 0;
+
+												nv_output_available = false;
+											}
+
+											made_frame = true;
+
+											if(!added)
+												result = exportReturn_InternalError;
+										}
+										else if(nv_err == NV_ENC_ERR_INVALID_PARAM)
+										{
+											// Huh? I guess the next buffer isn't ready?
+
+											nv_output_available = false;
+										}
+										else
+											result = exportReturn_InternalError;
+									}
+								}
+							}
+						#endif
+							else
+								assert(false);
 						}
 						
 						
@@ -2609,8 +3255,19 @@ exSDKExport(
 								{
 									assert(video_codec == WEBM_CODEC_AV1);
 									
-									assert(aom_encoder_queue.empty());
-									assert(aom_alpha_encoder_queue.empty());
+									if(av1_codec == AV1_CODEC_AOM)
+									{
+										assert(aom_encoder_queue.empty());
+										assert(aom_alpha_encoder_queue.empty());
+									}
+								#ifdef WEBM_HAVE_NVENC
+									else if(av1_codec == AV1_CODEC_NVENC)
+									{
+
+									}
+								#endif // WEBM_HAVE_NVENC
+									else
+										assert(false);
 								}
 							}
 						}
@@ -2745,74 +3402,140 @@ exSDKExport(
 									{
 										assert(video_codec == WEBM_CODEC_AV1);
 										
-										const aom_img_fmt_t imgfmt8 = chroma == WEBM_444 ? AOM_IMG_FMT_I444 :
-																		chroma == WEBM_422 ? AOM_IMG_FMT_I422 :
-																		AOM_IMG_FMT_I420;
-																		
-										const aom_img_fmt_t imgfmt16 = chroma == WEBM_444 ? AOM_IMG_FMT_I44416 :
-																		chroma == WEBM_422 ? AOM_IMG_FMT_I42216 :
-																		AOM_IMG_FMT_I42016;
-																		
-										const aom_img_fmt_t imgfmt = (bit_depth > 8 ? imgfmt16 : imgfmt8);
-										
-												
-										aom_image_t img_data;
-										aom_image_t *img = aom_img_alloc(&img_data, imgfmt, width, height, 32);
-										
-										aom_image_t alpha_img_data;
-										aom_image_t *alpha_img = NULL;
-										
-										if(use_alpha)
-											alpha_img = aom_img_alloc(&alpha_img_data, imgfmt, width, height, 32);
-										
-										
-										if(img && (!use_alpha || alpha_img))
+										if(av1_codec == AV1_CODEC_AOM)
 										{
-											if(bit_depth > 8)
-											{
-												img->bit_depth = bit_depth;
-												img->bps = img->bps * bit_depth / 16;
-												
-												if(use_alpha)
-												{
-													alpha_img->bit_depth = bit_depth;
-													alpha_img->bps = alpha_img->bps * bit_depth / 16;
-												}
-											}
-										
-											CopyPixToAOMImg(img, alpha_img, renderResult.outFrame, pixSuite, pix2Suite);
-											
-											
-											aom_codec_err_t encode_err = aom_codec_encode(&aom_encoder, img, encoder_FrameNumber, encoder_FrameDuration, 0);
-											
-											if(encode_err == AOM_CODEC_OK)
-											{
-												videoEncoderTime += frameRateP.value.timeValue;
-												
-												aom_encoder_iter = NULL;
-											}
-											else
-												result = exportReturn_InternalError;
-											
-											aom_img_free(img);
-											
-											
+											const aom_img_fmt_t imgfmt8 = chroma == WEBM_444 ? AOM_IMG_FMT_I444 :
+												chroma == WEBM_422 ? AOM_IMG_FMT_I422 :
+												AOM_IMG_FMT_I420;
+
+											const aom_img_fmt_t imgfmt16 = chroma == WEBM_444 ? AOM_IMG_FMT_I44416 :
+												chroma == WEBM_422 ? AOM_IMG_FMT_I42216 :
+												AOM_IMG_FMT_I42016;
+
+											const aom_img_fmt_t imgfmt = (bit_depth > 8 ? imgfmt16 : imgfmt8);
+
+
+											aom_image_t img_data;
+											aom_image_t* img = aom_img_alloc(&img_data, imgfmt, width, height, 32);
+
+											aom_image_t alpha_img_data;
+											aom_image_t* alpha_img = NULL;
+
 											if(use_alpha)
+												alpha_img = aom_img_alloc(&alpha_img_data, imgfmt, width, height, 32);
+
+
+											if(img && (!use_alpha || alpha_img))
 											{
-												aom_codec_err_t alpha_encode_err = aom_codec_encode(&aom_alpha_encoder, alpha_img, encoder_FrameNumber, encoder_FrameDuration, 0);
-												
-												if(alpha_encode_err == AOM_CODEC_OK)
+												if(bit_depth > 8)
 												{
-													aom_alpha_encoder_iter = NULL;
+													img->bit_depth = bit_depth;
+													img->bps = img->bps * bit_depth / 16;
+
+													if(use_alpha)
+													{
+														alpha_img->bit_depth = bit_depth;
+														alpha_img->bps = alpha_img->bps * bit_depth / 16;
+													}
+												}
+
+												CopyPixToAOMImg(img, alpha_img, renderResult.outFrame, pixSuite, pix2Suite);
+
+
+												aom_codec_err_t encode_err = aom_codec_encode(&aom_encoder, img, encoder_FrameNumber, encoder_FrameDuration, 0);
+
+												if(encode_err == AOM_CODEC_OK)
+												{
+													videoEncoderTime += frameRateP.value.timeValue;
+
+													aom_encoder_iter = NULL;
 												}
 												else
 													result = exportReturn_InternalError;
-												
-												aom_img_free(alpha_img);
+
+												aom_img_free(img);
+
+
+												if(use_alpha)
+												{
+													aom_codec_err_t alpha_encode_err = aom_codec_encode(&aom_alpha_encoder, alpha_img, encoder_FrameNumber, encoder_FrameDuration, 0);
+
+													if(alpha_encode_err == AOM_CODEC_OK)
+													{
+														aom_alpha_encoder_iter = NULL;
+													}
+													else
+														result = exportReturn_InternalError;
+
+													aom_img_free(alpha_img);
+												}
+											}
+											else
+												result = exportReturn_ErrMemory;
+										}
+									#ifdef WEBM_HAVE_NVENC
+										else if(av1_codec == AV1_CODEC_NVENC)
+										{
+											NV_ENC_LOCK_INPUT_BUFFER lockParams = { 0 };
+
+											lockParams.version = NV_ENC_LOCK_INPUT_BUFFER_VER;
+											lockParams.doNotWait = FALSE;
+											lockParams.inputBuffer = nv_input_buffers[nv_input_buffer_idx];
+											lockParams.bufferDataPtr = NULL;
+											lockParams.pitch = 0;
+
+											nv_err = nvenc.nvEncLockInputBuffer(nvEncoder, &lockParams);
+
+											if(nv_err == NV_ENC_SUCCESS)
+											{
+												CopyPixToNVENCBuf(lockParams.bufferDataPtr, width, height, lockParams.pitch, nv_input_format, renderResult.outFrame, pixSuite, pix2Suite);
+
+												nv_err = nvenc.nvEncUnlockInputBuffer(nvEncoder, nv_input_buffers[nv_input_buffer_idx]);
+
+												if(nv_err == NV_ENC_SUCCESS)
+												{
+													NV_ENC_PIC_PARAMS params = { 0 };
+
+													params.version = NV_ENC_PIC_PARAMS_VER;
+													params.inputWidth = width;
+													params.inputHeight = height;
+													params.inputPitch = lockParams.pitch;
+													params.encodePicFlags = (nv_input_buffer_idx >= (nv_input_buffers.size() - 1) ? NV_ENC_PIC_FLAG_FORCEINTRA : 0);
+													params.frameIdx = encoder_FrameNumber;
+													params.inputTimeStamp = encoder_timeStamp;
+													params.inputDuration = encoder_duration;
+													params.inputBuffer = nv_input_buffers[nv_input_buffer_idx];
+													params.outputBitstream = nv_output_buffers[nv_input_buffer_idx];
+													params.completionEvent = NULL;
+													params.bufferFmt = nv_input_format;
+													params.pictureStruct = NV_ENC_PIC_STRUCT_FRAME;
+
+													nv_err = nvenc.nvEncEncodePicture(nvEncoder, &params);
+
+													videoEncoderTime += frameRateP.value.timeValue;
+
+													nv_input_buffer_idx++;
+
+													assert(nv_err != NV_ENC_ERR_ENCODER_BUSY);
+
+													if(nv_err == NV_ENC_SUCCESS)
+													{
+														nv_output_available = true;
+													}
+													else if(nv_err == NV_ENC_ERR_NEED_MORE_INPUT)
+													{
+														nv_output_available = false;
+
+														nv_err = NV_ENC_SUCCESS;
+													}
+													else
+														result = exportReturn_InternalError;
+												}
 											}
 										}
+									#endif // WEBM_HAVE_NVENC
 										else
-											result = exportReturn_ErrMemory;
+											assert(false);
 									}
 									
 									
@@ -2852,29 +3575,62 @@ exSDKExport(
 								{
 									assert(video_codec == WEBM_CODEC_AV1);
 									
-									aom_codec_err_t encode_err = aom_codec_encode(&aom_encoder, NULL, encoder_FrameNumber, encoder_FrameDuration, 0);
-									
-									if(encode_err == AOM_CODEC_OK)
+									if(av1_codec == AV1_CODEC_AOM)
 									{
-										videoEncoderTime = LONG_LONG_MAX;
-										
-										aom_encoder_iter = NULL;
-									}
-									else
-										result = exportReturn_InternalError;
-									
-									
-									if(use_alpha)
-									{
-										aom_codec_err_t alpha_encode_err = aom_codec_encode(&aom_alpha_encoder, NULL, encoder_FrameNumber, encoder_FrameDuration, 0);
-										
-										if(alpha_encode_err == AOM_CODEC_OK)
+										aom_codec_err_t encode_err = aom_codec_encode(&aom_encoder, NULL, encoder_FrameNumber, encoder_FrameDuration, 0);
+
+										if(encode_err == AOM_CODEC_OK)
 										{
-											aom_alpha_encoder_iter = NULL;
+											videoEncoderTime = LONG_LONG_MAX;
+
+											aom_encoder_iter = NULL;
+										}
+										else
+											result = exportReturn_InternalError;
+
+
+										if(use_alpha)
+										{
+											aom_codec_err_t alpha_encode_err = aom_codec_encode(&aom_alpha_encoder, NULL, encoder_FrameNumber, encoder_FrameDuration, 0);
+
+											if(alpha_encode_err == AOM_CODEC_OK)
+											{
+												aom_alpha_encoder_iter = NULL;
+											}
+											else
+												result = exportReturn_InternalError;
+										}
+									}
+								#ifdef WEBM_HAVE_NVENC
+									else if(av1_codec == AV1_CODEC_NVENC)
+									{
+										NV_ENC_PIC_PARAMS params = { 0 };
+
+										params.version = NV_ENC_PIC_PARAMS_VER;
+										params.encodePicFlags = NV_ENC_PIC_FLAG_EOS;
+										params.inputBuffer = NULL;
+										params.outputBitstream = NULL;
+										params.completionEvent = NULL;
+
+										nv_err = nvenc.nvEncEncodePicture(nvEncoder, &params);
+
+										videoEncoderTime = LONG_LONG_MAX;
+
+										if(nv_err == NV_ENC_SUCCESS)
+										{
+											nv_output_available = true;
+										}
+										else if(nv_err == NV_ENC_ERR_NEED_MORE_INPUT)
+										{
+											nv_output_available = false;
+											assert(false);
 										}
 										else
 											result = exportReturn_InternalError;
 									}
+								#endif // WEBM_HAVE_NVENC
+									else
+										assert(false);
 								}
 							}
 						}
@@ -2965,20 +3721,47 @@ exSDKExport(
 			{
 				assert(video_codec == WEBM_CODEC_AV1);
 				
-				if(result == malNoError)
-					assert(NULL == aom_codec_get_cx_data(&aom_encoder, &aom_encoder_iter) && aom_encoder_queue.empty());
-			
-				aom_codec_err_t destroy_err = aom_codec_destroy(&aom_encoder);
-				assert(destroy_err == AOM_CODEC_OK);
-				
-				if(use_alpha)
+				if(av1_codec == AV1_CODEC_AOM)
 				{
 					if(result == malNoError)
-						assert(NULL == aom_codec_get_cx_data(&aom_alpha_encoder, &aom_alpha_encoder_iter) && aom_alpha_encoder_queue.empty());
-					
-					aom_codec_err_t alpha_destroy_err = aom_codec_destroy(&aom_alpha_encoder);
-					assert(alpha_destroy_err == AOM_CODEC_OK);
+						assert(NULL == aom_codec_get_cx_data(&aom_encoder, &aom_encoder_iter) && aom_encoder_queue.empty());
+
+					aom_codec_err_t destroy_err = aom_codec_destroy(&aom_encoder);
+					assert(destroy_err == AOM_CODEC_OK);
+
+					if(use_alpha)
+					{
+						if(result == malNoError)
+							assert(NULL == aom_codec_get_cx_data(&aom_alpha_encoder, &aom_alpha_encoder_iter) && aom_alpha_encoder_queue.empty());
+
+						aom_codec_err_t alpha_destroy_err = aom_codec_destroy(&aom_alpha_encoder);
+						assert(alpha_destroy_err == AOM_CODEC_OK);
+					}
 				}
+			#ifdef WEBM_HAVE_NVENC
+				else if(av1_codec == AV1_CODEC_NVENC)
+				{
+					assert(nv_input_buffer_idx == 0);
+					assert(!nv_output_available);
+					assert(nv_output_buffer_idx == 0);
+
+					for(int i=0; i < nv_input_buffers.size(); i++)
+						nvenc.nvEncDestroyInputBuffer(nvEncoder, nv_input_buffers[i]);
+
+					for(int i=0; i < nv_output_buffers.size(); i++)
+						nvenc.nvEncDestroyBitstreamBuffer(nvEncoder, nv_output_buffers[i]);
+
+					nv_err = nvenc.nvEncDestroyEncoder(nvEncoder);
+
+					assert(nv_err == NV_ENC_SUCCESS);
+
+					CUresult cuErr = cuCtxDestroy(cudaContext);
+
+					assert(cuErr == CUDA_SUCCESS);
+				}
+			#endif // WEBM_HAVE_NVENC
+				else
+					assert(false);
 			}
 		}
 			
