@@ -77,6 +77,7 @@ typedef enum {
 #define WebMPluginVersion				"WebMPluginVersion"
 
 #define WebMVideoCodec					"WebMVideoCodec"
+#define WebMAV1Codec					"WebMAV1Codec"
 #define WebMVideoMethod					"WebMVideoMethod"
 #define WebMVideoQuality				"WebMVideoQuality"
 #define WebMVideoBitrate				"WebMVideoBitrate"

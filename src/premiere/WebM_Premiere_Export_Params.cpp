@@ -385,6 +385,25 @@ exSDKGenerateDefaultParams(
 	exportParamSuite->AddParam(exID, gIdx, ADBEVideoCodecGroup, &codecParam);
 	
 	
+	// AV1 Codec
+	exParamValues av1CodecValues;
+	av1CodecValues.structVersion = 1;
+	av1CodecValues.rangeMin.intValue = AV1_CODEC_AUTO;
+	av1CodecValues.rangeMax.intValue = AV1_CODEC_AMD;
+	av1CodecValues.value.intValue = AV1_CODEC_AUTO;
+	av1CodecValues.hidden = kPrTrue;
+	codecValues.hidden = kPrFalse;
+
+	exNewParamInfo av1CodecParam;
+	av1CodecParam.structVersion = 1;
+	strncpy(av1CodecParam.identifier, WebMAV1Codec, 255);
+	av1CodecParam.paramType = exParamType_int;
+	av1CodecParam.flags = exParamFlag_none;
+	av1CodecParam.paramValues = av1CodecValues;
+
+	exportParamSuite->AddParam(exID, gIdx, ADBEVideoCodecGroup, &av1CodecParam);
+
+
 	// Method
 	exParamValues methodValues;
 	methodValues.structVersion = 1;
@@ -913,13 +932,11 @@ exSDKPostProcessParams(
 	
 	WebM_Video_Codec codecs[] = {	WEBM_CODEC_VP8,
 									WEBM_CODEC_VP9,
-									WEBM_CODEC_AV1
-	};
+									WEBM_CODEC_AV1 };
 	
 	const char *codecStrings[]	= {	"VP8",
 									"VP9",
-									"AV1"
-	};
+									"AV1" };
 
 	exportParamSuite->ClearConstrainedValues(exID, gIdx, WebMVideoCodec);
 	
@@ -932,6 +949,29 @@ exSDKPostProcessParams(
 	}
 	
 	
+	// AV1 Codec
+	utf16ncpy(paramString, "AV1 Codec", 255);
+	exportParamSuite->SetParamName(exID, gIdx, WebMAV1Codec, paramString);
+
+	AV1_Codec av1codecs[] = { AV1_CODEC_AUTO,
+								AV1_CODEC_AOM,
+								AV1_CODEC_NVENC };
+
+	const char *av1codecStrings[] = { "Auto",
+										"AOM",
+										"NVENC" };
+
+	exportParamSuite->ClearConstrainedValues(exID, gIdx, WebMAV1Codec);
+
+	exOneParamValueRec tempAV1Codec;
+	for(int i=0; i < 3; i++)
+	{
+		tempAV1Codec.intValue = av1codecs[i];
+		utf16ncpy(paramString, av1codecStrings[i], 255);
+		exportParamSuite->AddConstrainedValuePair(exID, gIdx, WebMAV1Codec, &tempAV1Codec, paramString);
+	}
+
+
 	// Method
 	utf16ncpy(paramString, "Method", 255);
 	exportParamSuite->SetParamName(exID, gIdx, WebMVideoMethod, paramString);
@@ -1243,8 +1283,9 @@ exSDKGetParamSummary(
 	paramSuite->GetParamValue(exID, gIdx, ADBEAudioRatePerSecond, &sampleRateP);
 	paramSuite->GetParamValue(exID, gIdx, ADBEAudioNumChannels, &channelTypeP);
 
-	exParamValues codecP, methodP, samplingP, bitDepthP, videoQualityP, videoBitrateP, alphaP, twoPassP;
+	exParamValues codecP, av1codecP, methodP, samplingP, bitDepthP, videoQualityP, videoBitrateP, alphaP, twoPassP;
 	paramSuite->GetParamValue(exID, gIdx, WebMVideoCodec, &codecP);
+	paramSuite->GetParamValue(exID, gIdx, WebMAV1Codec, &av1codecP);
 	paramSuite->GetParamValue(exID, gIdx, WebMVideoMethod, &methodP);
 	paramSuite->GetParamValue(exID, gIdx, WebMVideoSampling, &samplingP);
 	paramSuite->GetParamValue(exID, gIdx, WebMVideoBitDepth, &bitDepthP);
@@ -1376,6 +1417,15 @@ exSDKGetParamSummary(
 	stream3 << (codecP.value.intValue == WEBM_CODEC_VP9 ? ", VP9" :
 				codecP.value.intValue == WEBM_CODEC_AV1 ? ", AV1" :
 				", VP8");
+
+	if(codecP.value.intValue == WEBM_CODEC_AV1)
+	{
+		stream3 << " (";
+		stream3 << (av1codecP.value.intValue == AV1_CODEC_AOM ? "AOM" :
+					av1codecP.value.intValue == AV1_CODEC_NVENC ? "NVENC" :
+					"Auto");
+		stream3 << ")";
+	}
 	
 	if(twoPassP.value.intValue)
 		stream3 << " 2-pass";
@@ -1427,14 +1477,17 @@ exSDKValidateParamChanged (
 	
 	if(param == WebMVideoCodec)
 	{
-		exParamValues codecValue, samplingValue, bitDepthValue;
+		exParamValues codecValue, av1codecValue, samplingValue, bitDepthValue;
 		
 		paramSuite->GetParamValue(exID, gIdx, WebMVideoCodec, &codecValue);
+		paramSuite->GetParamValue(exID, gIdx, WebMAV1Codec, &av1codecValue);
 		paramSuite->GetParamValue(exID, gIdx, WebMVideoSampling, &samplingValue);
 		paramSuite->GetParamValue(exID, gIdx, WebMVideoBitDepth, &bitDepthValue);
 		
 		bitDepthValue.disabled = samplingValue.disabled = (codecValue.value.intValue != WEBM_CODEC_VP9);
+		av1codecValue.hidden = (codecValue.value.intValue != WEBM_CODEC_AV1);
 		
+		paramSuite->ChangeParam(exID, gIdx, WebMAV1Codec, &av1codecValue);
 		paramSuite->ChangeParam(exID, gIdx, WebMVideoSampling, &samplingValue);
 		paramSuite->ChangeParam(exID, gIdx, WebMVideoBitDepth, &bitDepthValue);
 	}

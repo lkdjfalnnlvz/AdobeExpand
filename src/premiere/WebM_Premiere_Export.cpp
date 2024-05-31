@@ -1264,9 +1264,10 @@ exSDKExport(
 								audioFormat == kPrAudioChannelType_Mono ? 1 :
 								2);
 	
-	exParamValues videoCodecP, methodP, videoQualityP, bitrateP, twoPassP, keyframeMaxDistanceP, samplingP, bitDepthP, alphaP, customArgsP;
+	exParamValues videoCodecP, av1codecP, methodP, videoQualityP, bitrateP, twoPassP, keyframeMaxDistanceP, samplingP, bitDepthP, alphaP, customArgsP;
 		
 	paramSuite->GetParamValue(exID, gIdx, WebMVideoCodec, &videoCodecP);
+	paramSuite->GetParamValue(exID, gIdx, WebMAV1Codec, &av1codecP);
 	paramSuite->GetParamValue(exID, gIdx, WebMVideoMethod, &methodP);
 	paramSuite->GetParamValue(exID, gIdx, WebMVideoQuality, &videoQualityP);
 	paramSuite->GetParamValue(exID, gIdx, WebMVideoBitrate, &bitrateP);
@@ -1289,7 +1290,8 @@ exSDKExport(
 	
 	const WebM_Video_Codec video_codec = (WebM_Video_Codec)videoCodecP.value.intValue;
 	const bool use_vp8 = (video_codec == WEBM_CODEC_VP8);
-	AV1_Codec av1_codec = AV1_CODEC_NVENC;
+	AV1_Codec av1_codec = (AV1_Codec)av1codecP.value.intValue;
+	const bool av1_auto = (av1_codec == AV1_CODEC_AUTO);
 	const WebM_Video_Method method = (WebM_Video_Method)methodP.value.intValue;
 	const WebM_Chroma_Sampling chroma = (use_vp8 ? WEBM_420 : (WebM_Chroma_Sampling)samplingP.value.intValue);
 	const int bit_depth = (use_vp8 ? 8 : bitDepthP.value.intValue);
@@ -1451,7 +1453,7 @@ exSDKExport(
 												
 		PrTime videoEncoderTime = exportInfoP->startTime;
 		
-		if(exportInfoP->exportVideo)
+		if(exportInfoP->exportVideo && result == malNoError)
 		{
 			if(video_codec == WEBM_CODEC_VP8 || video_codec == WEBM_CODEC_VP9)
 			{
@@ -1609,16 +1611,29 @@ exSDKExport(
 			{
 				assert(video_codec == WEBM_CODEC_AV1);
 				
+				if(av1_auto)
+				{
+				#ifdef WEBM_HAVE_NVENC
+					if(nvenc.version != 0)
+						av1_codec = AV1_CODEC_NVENC;
+					else
+				#endif
+						av1_codec = AV1_CODEC_AOM;
+				}
+
 				const AV1_Codec fallback_codec = AV1_CODEC_AOM;
 
 				if(av1_codec == AV1_CODEC_NVENC && (chroma != WEBM_420 || bit_depth > 10))
 				{
 					codecMessage = "Incompatible NVENC pixel settings";
 
-					av1_codec = fallback_codec;
+					if(av1_auto)
+						av1_codec = fallback_codec;
+					else
+						result = exportReturn_InternalError;
 				}
 
-				if(av1_codec == AV1_CODEC_NVENC)
+				if(av1_codec == AV1_CODEC_NVENC && result == malNoError)
 				{
 				#ifdef WEBM_HAVE_NVENC
 					assert(passes == 1); // not ready yet
@@ -1892,7 +1907,7 @@ exSDKExport(
 
 										assert(av1config.chromaFormatIDC == 1); // 4:2:0, 4:4:4 currently not supported
 										av1config.inputBitDepth = (bit_depth == 10 ? NV_ENC_BIT_DEPTH_10 : NV_ENC_BIT_DEPTH_8);
-										av1config.outputBitDepth = (bit_depth == 10 ? NV_ENC_BIT_DEPTH_10 : NV_ENC_BIT_DEPTH_8);
+										av1config.outputBitDepth = av1config.inputBitDepth;
 
 										NV_ENC_INITIALIZE_PARAMS params = { 0 };
 
@@ -1971,7 +1986,10 @@ exSDKExport(
 								{
 									codecMessage = "NVENC insufficient capabilities";
 
-									av1_codec = fallback_codec;
+									if(av1_auto)
+										av1_codec = fallback_codec;
+									else
+										result = exportReturn_InternalError;
 								}
 							}
 
@@ -1979,30 +1997,42 @@ exSDKExport(
 							{
 								codecMessage = "Failed to initialize NVENC encoder";
 
-								av1_codec = fallback_codec;
+								if(av1_auto)
+									av1_codec = fallback_codec;
+								else
+									result = exportReturn_InternalError;
 							}
 						}
 						else
 						{
 							codecMessage = "Failed to create CUDA context";
 
-							av1_codec = fallback_codec;
+							if(av1_auto)
+								av1_codec = fallback_codec;
+							else
+								result = exportReturn_InternalError;
 						}
 					}
 					else
 					{
 						codecMessage = "NVENC codec not available";
 
-						av1_codec = fallback_codec;
+						if(av1_auto)
+							av1_codec = fallback_codec;
+						else
+							result = exportReturn_InternalError;
 					}
 				#else
 					codecMessage = "NVENC codec not available";
 
-					av1_codec = fallback_codec;
-				#endif // WEBM_HAVE_NVENC
+					if(av1_auto)
+						av1_codec = fallback_codec;
+					else
+						result = exportReturn_InternalError;
+#endif // WEBM_HAVE_NVENC
 				}
 
-				if(av1_codec == AV1_CODEC_AOM)
+				if(av1_codec == AV1_CODEC_AOM && result == malNoError)
 				{
 					aom_codec_iface_t* iface = aom_codec_av1_cx();
 
@@ -2200,7 +2230,7 @@ exSDKExport(
 		
 		csSDK_int32 maxBlip = 100;
 		
-		if(exportInfoP->exportAudio && !vbr_pass)
+		if(exportInfoP->exportAudio && !vbr_pass && result == malNoError)
 		{
 			mySettings->sequenceAudioSuite->GetMaxBlip(audioRenderID, frameRateP.value.timeValue, &maxBlip);
 			
@@ -2395,7 +2425,7 @@ exSDKExport(
 		}
 		
 		
-		if(vpx_codec_err == VPX_CODEC_OK && aom_codec_err == AOM_CODEC_OK && v_err == OV_OK)
+		if(vpx_codec_err == VPX_CODEC_OK && aom_codec_err == AOM_CODEC_OK && v_err == OV_OK && result == malNoError)
 		{
 			// I'd say think about lowering this to get better precision,
 			// but I get some messed up stuff when I do that.  Maybe a bug in the muxer?
@@ -2606,7 +2636,7 @@ exSDKExport(
 				// but they may not be ready to produce output right away.  So what we do is keep
 				// feeding in the data until the output we want is produced.
 				
-				if(exportInfoP->exportAudio && !vbr_pass)
+				if(exportInfoP->exportAudio && !vbr_pass && result == malNoError)
 				{
 					const bool last_frame = (videoTime > (exportInfoP->endTime - frameRateP.value.timeValue));
 							
@@ -2763,7 +2793,7 @@ exSDKExport(
 				}
 				
 				
-				if(exportInfoP->exportVideo && (videoTime < exportInfoP->endTime)) // there will some audio after the last video frame
+				if(exportInfoP->exportVideo && (videoTime < exportInfoP->endTime) && result == malNoError) // there will some audio after the last video frame
 				{
 					bool made_frame = false;
 					
