@@ -3190,10 +3190,11 @@ exSDKExport(
 										{
 											assert(lock.outputTimeStamp == (videoTime - exportInfoP->startTime) * fps.numerator / (ticksPerSecond * fps.denominator));
 											assert(lock.outputDuration == 1);
+											assert(lock.pictureType != NV_ENC_PIC_TYPE_I); // not I, IDR!
 
 											bool added = muxer_segment->AddFrame((const uint8_t*)lock.bitstreamBufferPtr, lock.bitstreamSizeInBytes,
 																					vid_track, timeStamp,
-																					lock.pictureType == NV_ENC_PIC_TYPE_I);
+																					lock.pictureType == NV_ENC_PIC_TYPE_IDR);
 
 											nvenc.nvEncUnlockBitstream(nvEncoder, nv_output_buffers[nv_output_buffer_idx]);
 

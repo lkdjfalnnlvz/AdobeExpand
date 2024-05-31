@@ -1577,11 +1577,11 @@ SDKGetInfo8(
 													}
 													else if(localRecP->video_codec == CODEC_AV1)
 													{
-														const aom_codec_err_t decode_err = aom_codec_decode(&localRecP->aom_decoder, data, length, NULL);
+														const aom_codec_err_t decode_err = aom_codec_decode(&localRecP->aom_decoder, data, length, localRecP->aom_private_data);
 														
 														if(decode_err == AOM_CODEC_OK)
 														{
-															aom_codec_decode(&localRecP->aom_decoder, NULL, 0, NULL); // flush the decoder
+															// don't flush the decoder, or aom_codec_get_frame() will return NULL
 															
 															aom_codec_iter_t iter = NULL;
 															
@@ -1590,29 +1590,31 @@ SDKGetInfo8(
 															if(img)
 															{
 																localRecP->bit_depth = img->bit_depth;
-															
+
 																localRecP->img_fmt = (img->fmt == AOM_IMG_FMT_YV12 ? VPX_IMG_FMT_YV12 :
-																				img->fmt == AOM_IMG_FMT_I420 ? VPX_IMG_FMT_I420 :
-																				img->fmt == AOM_IMG_FMT_AOMYV12 ? VPX_IMG_FMT_I420 : // but with AOM color space?
-																				img->fmt == AOM_IMG_FMT_AOMI420 ? VPX_IMG_FMT_I420 :
-																				img->fmt == AOM_IMG_FMT_I422 ? VPX_IMG_FMT_I422 :
-																				img->fmt == AOM_IMG_FMT_I444 ? VPX_IMG_FMT_I444 :
-																				img->fmt == AOM_IMG_FMT_NV12 ? VPX_IMG_FMT_NV12 :
-																				img->fmt == AOM_IMG_FMT_I42016 ? VPX_IMG_FMT_I42016 :
-																				img->fmt == AOM_IMG_FMT_I42216 ? VPX_IMG_FMT_I42216 :
-																				img->fmt == AOM_IMG_FMT_I44416 ? VPX_IMG_FMT_I44416 :
-																				VPX_IMG_FMT_NONE);
-					
+																						img->fmt == AOM_IMG_FMT_I420 ? VPX_IMG_FMT_I420 :
+																						img->fmt == AOM_IMG_FMT_AOMYV12 ? VPX_IMG_FMT_I420 : // but with AOM color space?
+																						img->fmt == AOM_IMG_FMT_AOMI420 ? VPX_IMG_FMT_I420 :
+																						img->fmt == AOM_IMG_FMT_I422 ? VPX_IMG_FMT_I422 :
+																						img->fmt == AOM_IMG_FMT_I444 ? VPX_IMG_FMT_I444 :
+																						img->fmt == AOM_IMG_FMT_NV12 ? VPX_IMG_FMT_NV12 :
+																						img->fmt == AOM_IMG_FMT_I42016 ? VPX_IMG_FMT_I42016 :
+																						img->fmt == AOM_IMG_FMT_I42216 ? VPX_IMG_FMT_I42216 :
+																						img->fmt == AOM_IMG_FMT_I44416 ? VPX_IMG_FMT_I44416 :
+																						VPX_IMG_FMT_NONE);
+
 																localRecP->color_space = (img->cp == AOM_CICP_CP_BT_601 ? VPX_CS_BT_601 :
-																				img->cp == AOM_CICP_CP_SMPTE_240 ? VPX_CS_SMPTE_240 :
-																				img->cp == AOM_CICP_CP_BT_2020 ? VPX_CS_BT_2020 :
-																				img->tc == AOM_CICP_TC_SRGB ? VPX_CS_SRGB :
-																				VPX_CS_BT_709);
-	
+																							img->cp == AOM_CICP_CP_SMPTE_240 ? VPX_CS_SMPTE_240 :
+																							img->cp == AOM_CICP_CP_BT_2020 ? VPX_CS_BT_2020 :
+																							img->tc == AOM_CICP_TC_SRGB ? VPX_CS_SRGB :
+																							VPX_CS_BT_709);
+
 																localRecP->color_range = (img->range == AOM_CR_FULL_RANGE ? VPX_CR_FULL_RANGE : VPX_CR_STUDIO_RANGE);
-															
+
 																aom_img_free(img);
 															}
+															else
+																assert(false);
 														}
 														else
 															result = imFileReadFailed;
