@@ -1434,14 +1434,15 @@ exSDKExport(
 		CUcontext cudaContext = NULL;
 
 		NVENCSTATUS nv_err = NV_ENC_SUCCESS;
-		void *nvEncoder = NULL;
 
+		void *nv_encoder = NULL;
 		NV_ENC_BUFFER_FORMAT nv_input_format = NV_ENC_BUFFER_FORMAT_UNDEFINED;
 		int nv_input_buffer_idx = 0;
 		std::vector<NV_ENC_INPUT_PTR> nv_input_buffers;
 		bool nv_output_available = false;
 		int nv_output_buffer_idx = 0;
 		std::vector<NV_ENC_OUTPUT_PTR> nv_output_buffers;
+		std::queue<NV_ENC_LOCK_BITSTREAM> nv_encoder_queue;
 	#endif
 		
 		const uint64_t alpha_id = 1;
@@ -1654,7 +1655,7 @@ exSDKExport(
 							sessionParams.device = cudaContext;
 							sessionParams.apiVersion = NVENCAPI_VERSION;
 
-							nv_err = nvenc.nvEncOpenEncodeSessionEx(&sessionParams, &nvEncoder);
+							nv_err = nvenc.nvEncOpenEncodeSessionEx(&sessionParams, &nv_encoder);
 
 							if(nv_err == NV_ENC_SUCCESS)
 							{
@@ -1663,7 +1664,7 @@ exSDKExport(
 								bool have_codec = false;
 
 								uint32_t codec_count = 0;
-								nv_err = nvenc.nvEncGetEncodeGUIDCount(nvEncoder, &codec_count);
+								nv_err = nvenc.nvEncGetEncodeGUIDCount(nv_encoder, &codec_count);
 
 								if(nv_err == NV_ENC_SUCCESS && codec_count > 0)
 								{
@@ -1671,7 +1672,7 @@ exSDKExport(
 
 									uint32_t codec_count_again = 0;
 
-									nv_err = nvenc.nvEncGetEncodeGUIDs(nvEncoder, guids, codec_count, &codec_count_again);
+									nv_err = nvenc.nvEncGetEncodeGUIDs(nv_encoder, guids, codec_count, &codec_count_again);
 
 									assert(codec_count_again == codec_count);
 
@@ -1693,7 +1694,7 @@ exSDKExport(
 								{
 									uint32_t profile_count = 0;
 
-									nv_err = nvenc.nvEncGetEncodeProfileGUIDCount(nvEncoder, codecGUID, &profile_count);
+									nv_err = nvenc.nvEncGetEncodeProfileGUIDCount(nv_encoder, codecGUID, &profile_count);
 
 									if(nv_err == NV_ENC_SUCCESS && profile_count > 0)
 									{
@@ -1701,7 +1702,7 @@ exSDKExport(
 
 										uint32_t profile_count_again = 0;
 
-										nv_err = nvenc.nvEncGetEncodeProfileGUIDs(nvEncoder, codecGUID, guids, profile_count, &profile_count_again);
+										nv_err = nvenc.nvEncGetEncodeProfileGUIDs(nv_encoder, codecGUID, guids, profile_count, &profile_count_again);
 
 										assert(profile_count_again == profile_count);
 
@@ -1725,7 +1726,7 @@ exSDKExport(
 								{
 									uint32_t format_count = 0;
 
-									nv_err = nvenc.nvEncGetInputFormatCount(nvEncoder, codecGUID, &format_count);
+									nv_err = nvenc.nvEncGetInputFormatCount(nv_encoder, codecGUID, &format_count);
 
 									if(nv_err == NV_ENC_SUCCESS && format_count > 0)
 									{
@@ -1746,7 +1747,7 @@ exSDKExport(
 
 										uint32_t format_count_again = 0;
 
-										nv_err = nvenc.nvEncGetInputFormats(nvEncoder, codecGUID, formats, format_count, &format_count_again);
+										nv_err = nvenc.nvEncGetInputFormats(nv_encoder, codecGUID, formats, format_count, &format_count_again);
 
 										assert(format_count_again == format_count);
 
@@ -1802,7 +1803,7 @@ exSDKExport(
 								{
 									uint32_t preset_count = 0;
 
-									nv_err = nvenc.nvEncGetEncodePresetCount(nvEncoder, codecGUID, &preset_count);
+									nv_err = nvenc.nvEncGetEncodePresetCount(nv_encoder, codecGUID, &preset_count);
 
 									if(nv_err == NV_ENC_SUCCESS && preset_count > 0)
 									{
@@ -1810,7 +1811,7 @@ exSDKExport(
 
 										uint32_t preset_count_again = 0;
 
-										nv_err = nvenc.nvEncGetEncodeProfileGUIDs(nvEncoder, codecGUID, guids, preset_count, &preset_count_again);
+										nv_err = nvenc.nvEncGetEncodeProfileGUIDs(nv_encoder, codecGUID, guids, preset_count, &preset_count_again);
 
 										//assert(preset_count_again == preset_count); // ??
 
@@ -1837,7 +1838,7 @@ exSDKExport(
 									caps.version = NV_ENC_CAPS_PARAM_VER;
 									caps.capsToQuery = NV_ENC_CAPS_SUPPORT_10BIT_ENCODE;
 
-									nvenc.nvEncGetEncodeCaps(nvEncoder, codecGUID, &caps, &can10bit);
+									nvenc.nvEncGetEncodeCaps(nv_encoder, codecGUID, &caps, &can10bit);
 
 									if(!can10bit)
 										have_capabilities = false;
@@ -1851,7 +1852,7 @@ exSDKExport(
 									caps.version = NV_ENC_CAPS_PARAM_VER;
 									caps.capsToQuery = NV_ENC_CAPS_SUPPORT_YUV444_ENCODE;
 
-									nvenc.nvEncGetEncodeCaps(nvEncoder, codecGUID, &caps, &can4444);
+									nvenc.nvEncGetEncodeCaps(nv_encoder, codecGUID, &caps, &can4444);
 
 									if(!can4444)
 										have_capabilities = false;
@@ -1870,7 +1871,7 @@ exSDKExport(
 									presetConfig.version = NV_ENC_PRESET_CONFIG_VER;
 									presetConfig.presetCfg.version = NV_ENC_CONFIG_VER;
 
-									nv_err = nvenc.nvEncGetEncodePresetConfigEx(nvEncoder, codecGUID, presetGUID, tuningInfo, &presetConfig);
+									nv_err = nvenc.nvEncGetEncodePresetConfigEx(nv_encoder, codecGUID, presetGUID, tuningInfo, &presetConfig);
 
 									if(nv_err == NV_ENC_SUCCESS)
 									{
@@ -1942,7 +1943,7 @@ exSDKExport(
 										params.bufferFormat = NV_ENC_BUFFER_FORMAT_UNDEFINED; // only for DX12
 										params.outputStatsLevel = NV_ENC_OUTPUT_STATS_NONE;
 
-										nv_err = nvenc.nvEncInitializeEncoder(nvEncoder, &params);
+										nv_err = nvenc.nvEncInitializeEncoder(nv_encoder, &params);
 
 										if(nv_err == NV_ENC_SUCCESS)
 										{
@@ -1959,7 +1960,7 @@ exSDKExport(
 												input_params.inputBuffer = NULL;
 												input_params.pSysMemBuffer = NULL;
 
-												nv_err = nvenc.nvEncCreateInputBuffer(nvEncoder, &input_params);
+												nv_err = nvenc.nvEncCreateInputBuffer(nv_encoder, &input_params);
 
 												if(nv_err == NV_ENC_SUCCESS)
 												{
@@ -1971,7 +1972,7 @@ exSDKExport(
 													output_params.reserved = 0;
 													output_params.bitstreamBuffer = NULL;
 
-													nv_err = nvenc.nvEncCreateBitstreamBuffer(nvEncoder, &output_params);
+													nv_err = nvenc.nvEncCreateBitstreamBuffer(nv_encoder, &output_params);
 
 													if(nv_err == NV_ENC_SUCCESS)
 													{
@@ -2508,7 +2509,7 @@ exSDKExport(
 								payload.spsppsBuffer = privateP;
 								payload.outSPSPPSPayloadSize = &payloadSize;
 
-								NVENCSTATUS err = nvenc.nvEncGetSequenceParams(nvEncoder, &payload);
+								NVENCSTATUS err = nvenc.nvEncGetSequenceParams(nv_encoder, &payload);
 
 								if(err == NV_ENC_SUCCESS)
 									video->SetCodecPrivate((const uint8_t*)privateP, payloadSize);
@@ -2978,7 +2979,53 @@ exSDKExport(
 							#ifdef WEBM_HAVE_NVENC
 								else if(av1_codec == AV1_CODEC_NVENC)
 								{
+									while(nv_output_available)
+									{
+										assert(nv_output_buffer_idx < nv_input_buffer_idx);
 
+										if(vbr_pass)
+										{
+
+										}
+										else
+										{
+											NV_ENC_LOCK_BITSTREAM lock;
+
+											lock.version = NV_ENC_LOCK_BITSTREAM_VER;
+											lock.outputBitstream = nv_output_buffers[nv_output_buffer_idx];
+
+											nv_err = nvenc.nvEncLockBitstream(nv_encoder, &lock);
+
+											if(nv_err == NV_ENC_SUCCESS)
+											{
+												NV_ENC_LOCK_BITSTREAM q_lock = lock;
+												q_lock.bitstreamBufferPtr = malloc(q_lock.bitstreamSizeInBytes);
+												if(q_lock.bitstreamBufferPtr == NULL)
+													throw exportReturn_ErrMemory;
+												memcpy(q_lock.bitstreamBufferPtr, lock.bitstreamBufferPtr, q_lock.bitstreamSizeInBytes);
+												nv_encoder_queue.push(q_lock);
+
+												nvenc.nvEncUnlockBitstream(nv_encoder, nv_output_buffers[nv_output_buffer_idx]);
+
+												nv_output_buffer_idx++;
+
+												if (nv_output_buffer_idx == nv_input_buffer_idx)
+												{
+													nv_output_buffer_idx = nv_input_buffer_idx = 0;
+
+													nv_output_available = false;
+												}
+											}
+											else if (nv_err == NV_ENC_ERR_INVALID_PARAM)
+											{
+												// Huh? I guess the next buffer isn't ready?
+
+												nv_output_available = false;
+											}
+											else
+												result = exportReturn_InternalError;
+										}
+									}
 								}
 							#endif // WEBM_HAVE_NVENC
 								else
@@ -3199,58 +3246,27 @@ exSDKExport(
 						#ifdef WEBM_HAVE_NVENC
 							else if(av1_codec == AV1_CODEC_NVENC)
 							{
-								if(nv_output_available)
+								if(!nv_encoder_queue.empty())
 								{
-									assert(nv_output_buffer_idx < nv_input_buffer_idx);
+									NV_ENC_LOCK_BITSTREAM &lock = nv_encoder_queue.front();
 
-									if(vbr_pass)
-									{
+									assert(lock.outputTimeStamp == (videoTime - exportInfoP->startTime) * fps.numerator / (ticksPerSecond * fps.denominator));
+									assert(lock.outputDuration == 1);
+									assert(lock.pictureStruct == NV_ENC_PIC_STRUCT_FRAME);
+									assert(lock.pictureType != NV_ENC_PIC_TYPE_I); // not I, IDR!
 
-									}
-									else
-									{
-										NV_ENC_LOCK_BITSTREAM lock;
+									bool added = muxer_segment->AddFrame((const uint8_t *)lock.bitstreamBufferPtr, lock.bitstreamSizeInBytes,
+																			vid_track, timeStamp,
+																			lock.pictureType == NV_ENC_PIC_TYPE_IDR);
 
-										lock.version = NV_ENC_LOCK_BITSTREAM_VER;
-										lock.outputBitstream = nv_output_buffers[nv_output_buffer_idx];
+									made_frame = true;
 
-										nv_err = nvenc.nvEncLockBitstream(nvEncoder, &lock);
+									if(!added)
+										result = exportReturn_InternalError;
+									
+									free(lock.bitstreamBufferPtr);
 
-										if(nv_err == NV_ENC_SUCCESS)
-										{
-											assert(lock.outputTimeStamp == (videoTime - exportInfoP->startTime) * fps.numerator / (ticksPerSecond * fps.denominator));
-											assert(lock.outputDuration == 1);
-											assert(lock.pictureType != NV_ENC_PIC_TYPE_I); // not I, IDR!
-
-											bool added = muxer_segment->AddFrame((const uint8_t*)lock.bitstreamBufferPtr, lock.bitstreamSizeInBytes,
-																					vid_track, timeStamp,
-																					lock.pictureType == NV_ENC_PIC_TYPE_IDR);
-
-											nvenc.nvEncUnlockBitstream(nvEncoder, nv_output_buffers[nv_output_buffer_idx]);
-
-											nv_output_buffer_idx++;
-
-											if(nv_output_buffer_idx == nv_input_buffer_idx)
-											{
-												nv_output_buffer_idx = nv_input_buffer_idx = 0;
-
-												nv_output_available = false;
-											}
-
-											made_frame = true;
-
-											if(!added)
-												result = exportReturn_InternalError;
-										}
-										else if(nv_err == NV_ENC_ERR_INVALID_PARAM)
-										{
-											// Huh? I guess the next buffer isn't ready?
-
-											nv_output_available = false;
-										}
-										else
-											result = exportReturn_InternalError;
-									}
+									nv_encoder_queue.pop();
 								}
 							}
 						#endif
@@ -3294,7 +3310,7 @@ exSDKExport(
 								#ifdef WEBM_HAVE_NVENC
 									else if(av1_codec == AV1_CODEC_NVENC)
 									{
-
+										assert(nv_encoder_queue.empty());
 									}
 								#endif // WEBM_HAVE_NVENC
 									else
@@ -3515,13 +3531,13 @@ exSDKExport(
 											lockParams.bufferDataPtr = NULL;
 											lockParams.pitch = 0;
 
-											nv_err = nvenc.nvEncLockInputBuffer(nvEncoder, &lockParams);
+											nv_err = nvenc.nvEncLockInputBuffer(nv_encoder, &lockParams);
 
 											if(nv_err == NV_ENC_SUCCESS)
 											{
 												CopyPixToNVENCBuf(lockParams.bufferDataPtr, width, height, lockParams.pitch, nv_input_format, renderResult.outFrame, pixSuite, pix2Suite);
 
-												nv_err = nvenc.nvEncUnlockInputBuffer(nvEncoder, nv_input_buffers[nv_input_buffer_idx]);
+												nv_err = nvenc.nvEncUnlockInputBuffer(nv_encoder, nv_input_buffers[nv_input_buffer_idx]);
 
 												if(nv_err == NV_ENC_SUCCESS)
 												{
@@ -3541,7 +3557,7 @@ exSDKExport(
 													params.bufferFmt = nv_input_format;
 													params.pictureStruct = NV_ENC_PIC_STRUCT_FRAME;
 
-													nv_err = nvenc.nvEncEncodePicture(nvEncoder, &params);
+													nv_err = nvenc.nvEncEncodePicture(nv_encoder, &params);
 
 													videoEncoderTime += frameRateP.value.timeValue;
 
@@ -3643,7 +3659,7 @@ exSDKExport(
 										params.outputBitstream = NULL;
 										params.completionEvent = NULL;
 
-										nv_err = nvenc.nvEncEncodePicture(nvEncoder, &params);
+										nv_err = nvenc.nvEncEncodePicture(nv_encoder, &params);
 
 										videoEncoderTime = LONG_LONG_MAX;
 
@@ -3775,14 +3791,15 @@ exSDKExport(
 					assert(nv_input_buffer_idx == 0);
 					assert(!nv_output_available);
 					assert(nv_output_buffer_idx == 0);
+					assert(nv_encoder_queue.empty());
 
 					for(int i=0; i < nv_input_buffers.size(); i++)
-						nvenc.nvEncDestroyInputBuffer(nvEncoder, nv_input_buffers[i]);
+						nvenc.nvEncDestroyInputBuffer(nv_encoder, nv_input_buffers[i]);
 
 					for(int i=0; i < nv_output_buffers.size(); i++)
-						nvenc.nvEncDestroyBitstreamBuffer(nvEncoder, nv_output_buffers[i]);
+						nvenc.nvEncDestroyBitstreamBuffer(nv_encoder, nv_output_buffers[i]);
 
-					nv_err = nvenc.nvEncDestroyEncoder(nvEncoder);
+					nv_err = nvenc.nvEncDestroyEncoder(nv_encoder);
 
 					assert(nv_err == NV_ENC_SUCCESS);
 
