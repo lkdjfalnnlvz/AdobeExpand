@@ -1898,7 +1898,7 @@ exSDKExport(
 											else
 												assert(false);
 
-											rcParams.averageBitRate = bitrateP.value.intValue;
+											rcParams.averageBitRate = bitrateP.value.intValue * 1000;
 											rcParams.maxBitRate = rcParams.averageBitRate * 120 / 100;
 										}
 
@@ -2897,7 +2897,53 @@ exSDKExport(
 						#ifdef WEBM_HAVE_NVENC
 							else if(av1_codec == AV1_CODEC_NVENC)
 							{
+								while(nv_output_available)
+								{
+									assert(nv_output_buffer_idx < nv_input_buffer_idx);
 
+									if(vbr_pass)
+									{
+
+									}
+									else
+									{
+										NV_ENC_LOCK_BITSTREAM lock;
+
+										lock.version = NV_ENC_LOCK_BITSTREAM_VER;
+										lock.outputBitstream = nv_output_buffers[nv_output_buffer_idx];
+
+										nv_err = nvenc.nvEncLockBitstream(nv_encoder, &lock);
+
+										if(nv_err == NV_ENC_SUCCESS)
+										{
+											NV_ENC_LOCK_BITSTREAM q_lock = lock;
+											q_lock.bitstreamBufferPtr = malloc(q_lock.bitstreamSizeInBytes);
+											if (q_lock.bitstreamBufferPtr == NULL)
+												throw exportReturn_ErrMemory;
+											memcpy(q_lock.bitstreamBufferPtr, lock.bitstreamBufferPtr, q_lock.bitstreamSizeInBytes);
+											nv_encoder_queue.push(q_lock);
+
+											nvenc.nvEncUnlockBitstream(nv_encoder, nv_output_buffers[nv_output_buffer_idx]);
+
+											nv_output_buffer_idx++;
+
+											if(nv_output_buffer_idx == nv_input_buffer_idx)
+											{
+												nv_output_buffer_idx = nv_input_buffer_idx = 0;
+
+												nv_output_available = false;
+											}
+										}
+										else if(nv_err == NV_ENC_ERR_INVALID_PARAM)
+										{
+											// Huh? I guess the next buffer isn't ready?
+
+											nv_output_available = false;
+										}
+										else
+											result = exportReturn_InternalError;
+									}
+								}
 							}
 						#endif // WEBM_HAVE_NVENC
 							else
@@ -2979,53 +3025,7 @@ exSDKExport(
 							#ifdef WEBM_HAVE_NVENC
 								else if(av1_codec == AV1_CODEC_NVENC)
 								{
-									while(nv_output_available)
-									{
-										assert(nv_output_buffer_idx < nv_input_buffer_idx);
 
-										if(vbr_pass)
-										{
-
-										}
-										else
-										{
-											NV_ENC_LOCK_BITSTREAM lock;
-
-											lock.version = NV_ENC_LOCK_BITSTREAM_VER;
-											lock.outputBitstream = nv_output_buffers[nv_output_buffer_idx];
-
-											nv_err = nvenc.nvEncLockBitstream(nv_encoder, &lock);
-
-											if(nv_err == NV_ENC_SUCCESS)
-											{
-												NV_ENC_LOCK_BITSTREAM q_lock = lock;
-												q_lock.bitstreamBufferPtr = malloc(q_lock.bitstreamSizeInBytes);
-												if(q_lock.bitstreamBufferPtr == NULL)
-													throw exportReturn_ErrMemory;
-												memcpy(q_lock.bitstreamBufferPtr, lock.bitstreamBufferPtr, q_lock.bitstreamSizeInBytes);
-												nv_encoder_queue.push(q_lock);
-
-												nvenc.nvEncUnlockBitstream(nv_encoder, nv_output_buffers[nv_output_buffer_idx]);
-
-												nv_output_buffer_idx++;
-
-												if (nv_output_buffer_idx == nv_input_buffer_idx)
-												{
-													nv_output_buffer_idx = nv_input_buffer_idx = 0;
-
-													nv_output_available = false;
-												}
-											}
-											else if (nv_err == NV_ENC_ERR_INVALID_PARAM)
-											{
-												// Huh? I guess the next buffer isn't ready?
-
-												nv_output_available = false;
-											}
-											else
-												result = exportReturn_InternalError;
-										}
-									}
 								}
 							#endif // WEBM_HAVE_NVENC
 								else
@@ -3523,61 +3523,91 @@ exSDKExport(
 									#ifdef WEBM_HAVE_NVENC
 										else if(av1_codec == AV1_CODEC_NVENC)
 										{
-											NV_ENC_LOCK_INPUT_BUFFER lockParams = { 0 };
-
-											lockParams.version = NV_ENC_LOCK_INPUT_BUFFER_VER;
-											lockParams.doNotWait = FALSE;
-											lockParams.inputBuffer = nv_input_buffers[nv_input_buffer_idx];
-											lockParams.bufferDataPtr = NULL;
-											lockParams.pitch = 0;
-
-											nv_err = nvenc.nvEncLockInputBuffer(nv_encoder, &lockParams);
-
-											if(nv_err == NV_ENC_SUCCESS)
+											if(nv_input_buffer_idx < nv_input_buffers.size())
 											{
-												CopyPixToNVENCBuf(lockParams.bufferDataPtr, width, height, lockParams.pitch, nv_input_format, renderResult.outFrame, pixSuite, pix2Suite);
+												NV_ENC_LOCK_INPUT_BUFFER lockParams = { 0 };
 
-												nv_err = nvenc.nvEncUnlockInputBuffer(nv_encoder, nv_input_buffers[nv_input_buffer_idx]);
+												lockParams.version = NV_ENC_LOCK_INPUT_BUFFER_VER;
+												lockParams.doNotWait = FALSE;
+												lockParams.inputBuffer = nv_input_buffers[nv_input_buffer_idx];
+												lockParams.bufferDataPtr = NULL;
+												lockParams.pitch = 0;
+
+												nv_err = nvenc.nvEncLockInputBuffer(nv_encoder, &lockParams);
 
 												if(nv_err == NV_ENC_SUCCESS)
 												{
-													NV_ENC_PIC_PARAMS params = { 0 };
+													CopyPixToNVENCBuf(lockParams.bufferDataPtr, width, height, lockParams.pitch, nv_input_format, renderResult.outFrame, pixSuite, pix2Suite);
 
-													params.version = NV_ENC_PIC_PARAMS_VER;
-													params.inputWidth = width;
-													params.inputHeight = height;
-													params.inputPitch = lockParams.pitch;
-													params.encodePicFlags = (nv_input_buffer_idx >= (nv_input_buffers.size() - 1) ? NV_ENC_PIC_FLAG_FORCEINTRA : 0);
-													params.frameIdx = encoder_FrameNumber;
-													params.inputTimeStamp = encoder_timeStamp;
-													params.inputDuration = encoder_duration;
-													params.inputBuffer = nv_input_buffers[nv_input_buffer_idx];
-													params.outputBitstream = nv_output_buffers[nv_input_buffer_idx];
-													params.completionEvent = NULL;
-													params.bufferFmt = nv_input_format;
-													params.pictureStruct = NV_ENC_PIC_STRUCT_FRAME;
-
-													nv_err = nvenc.nvEncEncodePicture(nv_encoder, &params);
-
-													videoEncoderTime += frameRateP.value.timeValue;
-
-													nv_input_buffer_idx++;
-
-													assert(nv_err != NV_ENC_ERR_ENCODER_BUSY);
+													nv_err = nvenc.nvEncUnlockInputBuffer(nv_encoder, nv_input_buffers[nv_input_buffer_idx]);
 
 													if(nv_err == NV_ENC_SUCCESS)
 													{
-														nv_output_available = true;
-													}
-													else if(nv_err == NV_ENC_ERR_NEED_MORE_INPUT)
-													{
-														nv_output_available = false;
+														NV_ENC_PIC_PARAMS params = { 0 };
 
-														nv_err = NV_ENC_SUCCESS;
+														params.version = NV_ENC_PIC_PARAMS_VER;
+														params.inputWidth = width;
+														params.inputHeight = height;
+														params.inputPitch = lockParams.pitch;
+														params.encodePicFlags = 0; // (nv_input_buffer_idx >= (nv_input_buffers.size() - 1) ? NV_ENC_PIC_FLAG_FORCEIDR : 0);
+														params.frameIdx = encoder_FrameNumber;
+														params.inputTimeStamp = encoder_timeStamp;
+														params.inputDuration = encoder_duration;
+														params.inputBuffer = nv_input_buffers[nv_input_buffer_idx];
+														params.outputBitstream = nv_output_buffers[nv_input_buffer_idx];
+														params.completionEvent = NULL;
+														params.bufferFmt = nv_input_format;
+														params.pictureStruct = NV_ENC_PIC_STRUCT_FRAME;
+
+														nv_err = nvenc.nvEncEncodePicture(nv_encoder, &params);
+
+														videoEncoderTime += frameRateP.value.timeValue;
+
+														nv_input_buffer_idx++;
+
+														assert(nv_err != NV_ENC_ERR_ENCODER_BUSY);
+
+														if (nv_err == NV_ENC_SUCCESS)
+														{
+															nv_output_available = true;
+														}
+														else if (nv_err == NV_ENC_ERR_NEED_MORE_INPUT)
+														{
+															nv_output_available = false;
+
+															nv_err = NV_ENC_SUCCESS;
+														}
+														else
+															result = exportReturn_InternalError;
 													}
-													else
-														result = exportReturn_InternalError;
 												}
+											}
+											else
+											{
+												assert(false); // seems we never have to do this
+
+												// flush the encoder
+												NV_ENC_PIC_PARAMS params = { 0 };
+
+												params.version = NV_ENC_PIC_PARAMS_VER;
+												params.encodePicFlags = NV_ENC_PIC_FLAG_EOS;
+												params.inputBuffer = NULL;
+												params.outputBitstream = NULL;
+												params.completionEvent = NULL;
+
+												nv_err = nvenc.nvEncEncodePicture(nv_encoder, &params);
+
+												if(nv_err == NV_ENC_SUCCESS)
+												{
+													nv_output_available = true;
+												}
+												else if(nv_err == NV_ENC_ERR_NEED_MORE_INPUT)
+												{
+													nv_output_available = false;
+													assert(false);
+												}
+												else
+													result = exportReturn_InternalError;
 											}
 										}
 									#endif // WEBM_HAVE_NVENC
