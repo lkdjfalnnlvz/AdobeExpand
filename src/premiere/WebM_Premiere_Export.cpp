@@ -1396,8 +1396,15 @@ exSDKExport(
 	
 			
 	try{
-	
-	const int passes = ( (exportInfoP->exportVideo && twoPassP.value.intValue) ? 2 : 1);
+
+	bool multipass = (exportInfoP->exportVideo && twoPassP.value.intValue);
+
+#ifdef WEBM_HAVE_NVENC
+	if(exportInfoP->exportVideo && video_codec == WEBM_CODEC_AV1 && av1_codec != AV1_CODEC_AOM && nvenc.version != 0 && chroma == WEBM_420 && bit_depth <= 10)
+		multipass = false; // in case we get NVENC, which does 2-pass internally maybe???
+#endif
+
+	const int passes = (multipass ? 2 : 1);
 	
 	for(int pass = 0; pass < passes && result == malNoError; pass++)
 	{
@@ -1637,8 +1644,7 @@ exSDKExport(
 				if(av1_codec == AV1_CODEC_NVENC && result == malNoError)
 				{
 				#ifdef WEBM_HAVE_NVENC
-					assert(passes == 1); // not ready yet
-					assert(!use_alpha);
+					assert(!use_alpha); // not ready yet
 
 					if(nvenc.version != 0)
 					{
@@ -1903,6 +1909,9 @@ exSDKExport(
 										}
 
 										assert(rcParams.multiPass == NV_ENC_MULTI_PASS_DISABLED);
+										rcParams.multiPass = (twoPassP.value.intValue ? NV_ENC_TWO_PASS_FULL_RESOLUTION : NV_ENC_MULTI_PASS_DISABLED);
+
+										assert(passes == 1); // we set multipass, but does it happen internally?
 
 										NV_ENC_CONFIG_AV1 &av1config = config.encodeCodecConfig.av1Config;
 
