@@ -1250,6 +1250,9 @@ exSDKExport(
 	paramSuite->GetParamValue(exID, gIdx, ADBEVideoFieldType, &fieldTypeP);
 	paramSuite->GetParamValue(exID, gIdx, ADBEVideoFPS, &frameRateP);
 	
+	exRatioValue fps;
+	get_framerate(ticksPerSecond, frameRateP.value.timeValue, &fps);
+
 	exParamValues sampleRateP, channelTypeP;
 	paramSuite->GetParamValue(exID, gIdx, ADBEAudioRatePerSecond, &sampleRateP);
 	paramSuite->GetParamValue(exID, gIdx, ADBEAudioNumChannels, &channelTypeP);
@@ -1399,21 +1402,460 @@ exSDKExport(
 
 	bool multipass = (exportInfoP->exportVideo && twoPassP.value.intValue);
 
+	std::string codecMessage;
+
 #ifdef WEBM_HAVE_NVENC
-	if(exportInfoP->exportVideo && video_codec == WEBM_CODEC_AV1 && av1_codec != AV1_CODEC_AOM && nvenc.version != 0 && chroma == WEBM_420 && bit_depth <= 10)
-		multipass = false; // in case we get NVENC, which does 2-pass internally maybe???
-#endif
+	CUcontext cudaContext = NULL;
+
+	NVENCSTATUS nv_err = NV_ENC_SUCCESS;
+
+	void* nv_encoder = NULL;
+	NV_ENC_BUFFER_FORMAT nv_input_format = NV_ENC_BUFFER_FORMAT_UNDEFINED;
+	int nv_input_buffer_idx = 0;
+	std::vector<NV_ENC_INPUT_PTR> nv_input_buffers;
+	bool nv_output_available = false;
+	int nv_output_buffer_idx = 0;
+	std::vector<NV_ENC_OUTPUT_PTR> nv_output_buffers;
+	std::queue<NV_ENC_LOCK_BITSTREAM> nv_encoder_queue;
+#endif // WEBM_HAVE_NVENC
+
+	if(exportInfoP->exportVideo && video_codec == WEBM_CODEC_AV1 && av1_codec != AV1_CODEC_AOM)
+	{
+		// Checking NVENC stuff here because it doesn't actually appear to run through multiple passes
+		// and want to make sure I'm actually going to use it before I cancel them.
+
+		if(av1_auto)
+		{
+		#ifdef WEBM_HAVE_NVENC
+			if(nvenc.version != 0)
+				av1_codec = AV1_CODEC_NVENC;
+			else
+		#endif // WEBM_HAVE_NVENC
+				av1_codec = AV1_CODEC_AOM;
+		}
+
+		const AV1_Codec fallback_codec = AV1_CODEC_AOM;
+
+		if(av1_codec == AV1_CODEC_NVENC && (chroma != WEBM_420 || bit_depth > 10))
+		{
+			codecMessage = "Incompatible NVENC pixel settings";
+
+			if(av1_auto)
+				av1_codec = fallback_codec;
+			else
+				result = exportReturn_InternalError;
+		}
+
+		if(av1_codec == AV1_CODEC_NVENC && result == malNoError)
+		{
+		#ifdef WEBM_HAVE_NVENC
+			assert(!use_alpha); // not ready yet
+
+			if(nvenc.version != 0)
+			{
+				CUresult cuErr = cuCtxCreate(&cudaContext, CU_CTX_SCHED_AUTO, cudaDevice);
+
+				if(cuErr == CUDA_SUCCESS)
+				{
+					assert(cudaContext != NULL);
+
+					NV_ENC_OPEN_ENCODE_SESSION_EX_PARAMS sessionParams = { 0 };
+
+					sessionParams.version = NV_ENC_OPEN_ENCODE_SESSION_EX_PARAMS_VER;
+					sessionParams.deviceType = NV_ENC_DEVICE_TYPE_CUDA;
+					sessionParams.device = cudaContext;
+					sessionParams.apiVersion = NVENCAPI_VERSION;
+
+					nv_err = nvenc.nvEncOpenEncodeSessionEx(&sessionParams, &nv_encoder);
+
+					if(nv_err == NV_ENC_SUCCESS)
+					{
+						const GUID codecGUID = NV_ENC_CODEC_AV1_GUID;
+
+						bool have_codec = false;
+
+						uint32_t codec_count = 0;
+						nv_err = nvenc.nvEncGetEncodeGUIDCount(nv_encoder, &codec_count);
+
+						if(nv_err == NV_ENC_SUCCESS && codec_count > 0)
+						{
+							GUID *guids = new GUID[codec_count];
+
+							uint32_t codec_count_again = 0;
+
+							nv_err = nvenc.nvEncGetEncodeGUIDs(nv_encoder, guids, codec_count, &codec_count_again);
+
+							assert(codec_count_again == codec_count);
+
+							for(int i=0; i < codec_count && nv_err == NV_ENC_SUCCESS && !have_codec; i++)
+							{
+								if(guids[i] == codecGUID)
+									have_codec = true;
+							}
+
+							delete[] guids;
+						}
+
+
+						const GUID profileGUID = NV_ENC_AV1_PROFILE_MAIN_GUID;
+
+						bool have_profile = false;
+
+						if (have_codec)
+						{
+							uint32_t profile_count = 0;
+
+							nv_err = nvenc.nvEncGetEncodeProfileGUIDCount(nv_encoder, codecGUID, &profile_count);
+
+							if(nv_err == NV_ENC_SUCCESS && profile_count > 0)
+							{
+								GUID *guids = new GUID[profile_count];
+
+								uint32_t profile_count_again = 0;
+
+								nv_err = nvenc.nvEncGetEncodeProfileGUIDs(nv_encoder, codecGUID, guids, profile_count, &profile_count_again);
+
+								assert(profile_count_again == profile_count);
+
+								for(int i=0; i < profile_count && nv_err == NV_ENC_SUCCESS && !have_profile; i++)
+								{
+									if(guids[i] == profileGUID)
+										have_profile = true;
+								}
+
+								delete[] guids;
+							}
+						}
+
+
+						nv_input_format = (chroma == WEBM_444) ? (bit_depth == 10 ? NV_ENC_BUFFER_FORMAT_YUV444_10BIT : NV_ENC_BUFFER_FORMAT_YUV444) :
+																	(bit_depth == 10 ? NV_ENC_BUFFER_FORMAT_YUV420_10BIT : NV_ENC_BUFFER_FORMAT_IYUV);
+
+						bool have_input_format = false;
+
+						if(have_codec && have_profile)
+						{
+							uint32_t format_count = 0;
+
+							nv_err = nvenc.nvEncGetInputFormatCount(nv_encoder, codecGUID, &format_count);
+
+							if(nv_err == NV_ENC_SUCCESS && format_count > 0)
+							{
+								bool have_nv12 = false;
+								bool have_yv12 = false;
+								bool have_iyuv = false;
+								bool have_yuv444 = false;
+								bool have_yuv420_10bit = false;
+								bool have_yuv444_10bit = false;
+								bool have_argb = false;
+								bool have_argb10 = false;
+								bool have_ayuv = false;
+								bool have_abgr = false;
+								bool have_abgr10 = false;
+								bool have_u8 = false;
+
+								NV_ENC_BUFFER_FORMAT* formats = new NV_ENC_BUFFER_FORMAT[format_count];
+
+								uint32_t format_count_again = 0;
+
+								nv_err = nvenc.nvEncGetInputFormats(nv_encoder, codecGUID, formats, format_count, &format_count_again);
+
+								assert(format_count_again == format_count);
+
+								for(int i=0; i < format_count && nv_err == NV_ENC_SUCCESS; i++)
+								{
+									const NV_ENC_BUFFER_FORMAT& format = formats[i];
+
+									if(format == NV_ENC_BUFFER_FORMAT_NV12)
+										have_nv12 = true;
+									else if(format == NV_ENC_BUFFER_FORMAT_YV12)
+										have_yv12 = true;
+									else if(format == NV_ENC_BUFFER_FORMAT_IYUV)
+										have_iyuv = true;
+									else if(format == NV_ENC_BUFFER_FORMAT_YUV444)
+										have_yuv444 = true;
+									else if(format == NV_ENC_BUFFER_FORMAT_YUV420_10BIT)
+										have_yuv420_10bit = true;
+									else if(format == NV_ENC_BUFFER_FORMAT_YUV444_10BIT)
+										have_yuv444_10bit = true;
+									else if(format == NV_ENC_BUFFER_FORMAT_ARGB)
+										have_argb = true;
+									else if(format == NV_ENC_BUFFER_FORMAT_ARGB10)
+										have_argb10 = true;
+									else if(format == NV_ENC_BUFFER_FORMAT_AYUV)
+										have_ayuv = true;
+									else if(format == NV_ENC_BUFFER_FORMAT_ABGR)
+										have_abgr = true;
+									else if(format == NV_ENC_BUFFER_FORMAT_ABGR10)
+										have_abgr10 = true;
+									else if(format == NV_ENC_BUFFER_FORMAT_U8)
+										have_u8 = true;
+								}
+
+								delete[] formats;
+
+								if(nv_input_format == NV_ENC_BUFFER_FORMAT_IYUV)
+									have_input_format = have_iyuv;
+								else if(nv_input_format == NV_ENC_BUFFER_FORMAT_YUV444)
+									have_input_format = have_yuv444;
+								else if(nv_input_format == NV_ENC_BUFFER_FORMAT_YUV420_10BIT)
+									have_input_format = have_yuv420_10bit;
+								else if(nv_input_format == NV_ENC_BUFFER_FORMAT_YUV444_10BIT)
+									have_input_format = have_yuv444_10bit;
+							}
+						}
+
+
+						const GUID presetGUID = NV_ENC_PRESET_P7_GUID;
+
+						bool have_preset = false;
+
+						if(have_codec && have_profile && have_input_format)
+						{
+							uint32_t preset_count = 0;
+
+							nv_err = nvenc.nvEncGetEncodePresetCount(nv_encoder, codecGUID, &preset_count);
+
+							if (nv_err == NV_ENC_SUCCESS && preset_count > 0)
+							{
+								GUID *guids = new GUID[preset_count];
+
+								uint32_t preset_count_again = 0;
+
+								nv_err = nvenc.nvEncGetEncodeProfileGUIDs(nv_encoder, codecGUID, guids, preset_count, &preset_count_again);
+
+								//assert(preset_count_again == preset_count); // ??
+
+								for(int i=0; i < preset_count_again && nv_err == NV_ENC_SUCCESS && !have_preset; i++)
+								{
+									if(guids[i] == presetGUID)
+										have_preset = true;
+								}
+
+								delete[] guids;
+							}
+						}
+
+						assert(!have_preset); // not sure what's going on here, using NV_ENC_PRESET_P7_GUID anyway
+
+
+						bool have_capabilities = true;
+
+						if(bit_depth == 10)
+						{
+							int can10bit = 0;
+
+							NV_ENC_CAPS_PARAM caps = { 0 };
+							caps.version = NV_ENC_CAPS_PARAM_VER;
+							caps.capsToQuery = NV_ENC_CAPS_SUPPORT_10BIT_ENCODE;
+
+							nvenc.nvEncGetEncodeCaps(nv_encoder, codecGUID, &caps, &can10bit);
+
+							if(!can10bit)
+								have_capabilities = false;
+						}
+
+						if(chroma == WEBM_444)
+						{
+							int can4444 = 0;
+
+							NV_ENC_CAPS_PARAM caps = { 0 };
+							caps.version = NV_ENC_CAPS_PARAM_VER;
+							caps.capsToQuery = NV_ENC_CAPS_SUPPORT_YUV444_ENCODE;
+
+							nvenc.nvEncGetEncodeCaps(nv_encoder, codecGUID, &caps, &can4444);
+
+							if (!can4444)
+								have_capabilities = false;
+						}
+						else if(chroma == WEBM_422)
+						{
+							have_capabilities = false;
+						}
+
+
+						if(nv_err == NV_ENC_SUCCESS && have_codec && have_profile && have_input_format && have_capabilities)
+						{
+							const NV_ENC_TUNING_INFO tuningInfo = NV_ENC_TUNING_INFO_HIGH_QUALITY;
+
+							NV_ENC_PRESET_CONFIG presetConfig = { 0 };
+							presetConfig.version = NV_ENC_PRESET_CONFIG_VER;
+							presetConfig.presetCfg.version = NV_ENC_CONFIG_VER;
+
+							nv_err = nvenc.nvEncGetEncodePresetConfigEx(nv_encoder, codecGUID, presetGUID, tuningInfo, &presetConfig);
+
+							if(nv_err == NV_ENC_SUCCESS)
+							{
+								NV_ENC_CONFIG& config = presetConfig.presetCfg;
+
+								NV_ENC_RC_PARAMS& rcParams = config.rcParams;
+
+								if(method == WEBM_METHOD_CONSTANT_QUALITY || method == WEBM_METHOD_CONSTRAINED_QUALITY)
+								{
+									rcParams.rateControlMode = NV_ENC_PARAMS_RC_CONSTQP;
+
+									rcParams.constQP.qpIntra = rcParams.constQP.qpInterP = rcParams.constQP.qpInterB = (100 - videoQualityP.value.intValue);
+								}
+								else
+								{
+									if(method == WEBM_METHOD_VBR)
+									{
+										rcParams.rateControlMode = NV_ENC_PARAMS_RC_VBR;
+									}
+									else if(method == WEBM_METHOD_BITRATE)
+									{
+										rcParams.rateControlMode = NV_ENC_PARAMS_RC_CBR;
+									}
+									else
+										assert(false);
+
+									rcParams.averageBitRate = bitrateP.value.intValue * 1000;
+									rcParams.maxBitRate = rcParams.averageBitRate * 120 / 100;
+								}
+
+								assert(rcParams.multiPass == NV_ENC_MULTI_PASS_DISABLED);
+								rcParams.multiPass = (twoPassP.value.intValue ? NV_ENC_TWO_PASS_FULL_RESOLUTION : NV_ENC_MULTI_PASS_DISABLED);
+
+								NV_ENC_CONFIG_AV1& av1config = config.encodeCodecConfig.av1Config;
+
+								assert(av1config.chromaFormatIDC == 1); // 4:2:0, 4:4:4 currently not supported
+								av1config.inputBitDepth = (bit_depth == 10 ? NV_ENC_BIT_DEPTH_10 : NV_ENC_BIT_DEPTH_8);
+								av1config.outputBitDepth = av1config.inputBitDepth;
+
+								NV_ENC_INITIALIZE_PARAMS params = { 0 };
+
+								params.version = NV_ENC_INITIALIZE_PARAMS_VER;
+								params.encodeGUID = codecGUID;
+								params.presetGUID = presetGUID;
+								params.encodeWidth = renderParms.inWidth;
+								params.encodeHeight = renderParms.inHeight;
+								params.darWidth = renderParms.inWidth * renderParms.inPixelAspectRatioNumerator;
+								params.darHeight = renderParms.inHeight * renderParms.inPixelAspectRatioDenominator;
+								params.frameRateNum = fps.numerator;
+								params.frameRateDen = fps.denominator;
+								params.enableEncodeAsync = FALSE;
+								params.enablePTD = TRUE;
+								params.reportSliceOffsets = FALSE;
+								params.enableSubFrameWrite = FALSE;
+								params.enableExternalMEHints = FALSE;
+								params.enableMEOnlyMode = FALSE;
+								params.enableWeightedPrediction = FALSE;
+								params.splitEncodeMode = FALSE;
+								params.enableOutputInVidmem = FALSE;
+								params.enableReconFrameOutput = FALSE;
+								params.enableOutputStats = FALSE;
+								params.enableUniDirectionalB = FALSE;
+								params.privDataSize = 0;
+								params.reserved = 0;
+								params.privData = NULL;
+								params.encodeConfig = &config;
+								params.maxEncodeWidth = 0;
+								params.maxEncodeHeight = 0;
+								params.tuningInfo = tuningInfo;
+								params.bufferFormat = NV_ENC_BUFFER_FORMAT_UNDEFINED; // only for DX12
+								params.outputStatsLevel = NV_ENC_OUTPUT_STATS_NONE;
+
+								nv_err = nvenc.nvEncInitializeEncoder(nv_encoder, &params);
+
+								if(nv_err == NV_ENC_SUCCESS)
+								{
+									const int num_buffers = std::min(64, keyframeMaxDistanceP.value.intValue * 4);
+
+									for(int i=0; i < num_buffers && nv_err == NV_ENC_SUCCESS; i++)
+									{
+										NV_ENC_CREATE_INPUT_BUFFER input_params = { 0 };
+
+										input_params.version = NV_ENC_CREATE_INPUT_BUFFER_VER;
+										input_params.width = params.encodeWidth;
+										input_params.height = params.encodeHeight;
+										input_params.bufferFmt = nv_input_format;
+										input_params.inputBuffer = NULL;
+										input_params.pSysMemBuffer = NULL;
+
+										nv_err = nvenc.nvEncCreateInputBuffer(nv_encoder, &input_params);
+
+										if(nv_err == NV_ENC_SUCCESS)
+										{
+											nv_input_buffers.push_back(input_params.inputBuffer);
+
+											NV_ENC_CREATE_BITSTREAM_BUFFER output_params = { 0 };
+
+											output_params.version = NV_ENC_CREATE_BITSTREAM_BUFFER_VER;
+											output_params.reserved = 0;
+											output_params.bitstreamBuffer = NULL;
+
+											nv_err = nvenc.nvEncCreateBitstreamBuffer(nv_encoder, &output_params);
+
+											if(nv_err == NV_ENC_SUCCESS)
+											{
+												nv_output_buffers.push_back(output_params.bitstreamBuffer);
+											}
+										}
+									}
+								}
+							}
+						}
+						else
+						{
+							codecMessage = "NVENC insufficient capabilities";
+
+							if(av1_auto)
+								av1_codec = fallback_codec;
+							else
+								result = exportReturn_InternalError;
+						}
+					}
+
+					if(nv_err == NV_ENC_SUCCESS)
+					{
+						multipass = false; // We set the multipass flag, but does it happen internally? Don't see how to actually run two passes.
+					}
+					else
+					{
+						codecMessage = "Failed to initialize NVENC encoder";
+
+						if(av1_auto)
+							av1_codec = fallback_codec;
+						else
+							result = exportReturn_InternalError;
+					}
+				}
+				else
+				{
+					codecMessage = "Failed to create CUDA context";
+
+					if(av1_auto)
+						av1_codec = fallback_codec;
+					else
+						result = exportReturn_InternalError;
+				}
+			}
+			else
+			{
+				codecMessage = "NVENC codec not available";
+
+				if(av1_auto)
+					av1_codec = fallback_codec;
+				else
+					result = exportReturn_InternalError;
+			}
+		#else
+			codecMessage = "NVENC codec not available";
+
+			if(av1_auto)
+				av1_codec = fallback_codec;
+			else
+				result = exportReturn_InternalError;
+		#endif // WEBM_HAVE_NVENC
+		}
+	}
+
 
 	const int passes = (multipass ? 2 : 1);
 	
 	for(int pass = 0; pass < passes && result == malNoError; pass++)
 	{
 		const bool vbr_pass = (passes > 1 && pass == 0);
-		
-		exRatioValue fps;
-		get_framerate(ticksPerSecond, frameRateP.value.timeValue, &fps);
-		
-		std::string codecMessage;
 		
 		vpx_codec_err_t vpx_codec_err = VPX_CODEC_OK;
 		
@@ -1436,21 +1878,6 @@ exSDKExport(
 		aom_codec_iter_t aom_alpha_encoder_iter = NULL;
 		std::queue<aom_codec_cx_pkt_t> aom_alpha_encoder_queue;
 		
-
-	#ifdef WEBM_HAVE_NVENC
-		CUcontext cudaContext = NULL;
-
-		NVENCSTATUS nv_err = NV_ENC_SUCCESS;
-
-		void *nv_encoder = NULL;
-		NV_ENC_BUFFER_FORMAT nv_input_format = NV_ENC_BUFFER_FORMAT_UNDEFINED;
-		int nv_input_buffer_idx = 0;
-		std::vector<NV_ENC_INPUT_PTR> nv_input_buffers;
-		bool nv_output_available = false;
-		int nv_output_buffer_idx = 0;
-		std::vector<NV_ENC_OUTPUT_PTR> nv_output_buffers;
-		std::queue<NV_ENC_LOCK_BITSTREAM> nv_encoder_queue;
-	#endif
 		
 		const uint64_t alpha_id = 1;
 		
@@ -1619,429 +2046,6 @@ exSDKExport(
 			{
 				assert(video_codec == WEBM_CODEC_AV1);
 				
-				if(av1_auto)
-				{
-				#ifdef WEBM_HAVE_NVENC
-					if(nvenc.version != 0)
-						av1_codec = AV1_CODEC_NVENC;
-					else
-				#endif
-						av1_codec = AV1_CODEC_AOM;
-				}
-
-				const AV1_Codec fallback_codec = AV1_CODEC_AOM;
-
-				if(av1_codec == AV1_CODEC_NVENC && (chroma != WEBM_420 || bit_depth > 10))
-				{
-					codecMessage = "Incompatible NVENC pixel settings";
-
-					if(av1_auto)
-						av1_codec = fallback_codec;
-					else
-						result = exportReturn_InternalError;
-				}
-
-				if(av1_codec == AV1_CODEC_NVENC && result == malNoError)
-				{
-				#ifdef WEBM_HAVE_NVENC
-					assert(!use_alpha); // not ready yet
-
-					if(nvenc.version != 0)
-					{
-						CUresult cuErr = cuCtxCreate(&cudaContext, CU_CTX_SCHED_AUTO, cudaDevice);
-
-						if(cuErr == CUDA_SUCCESS)
-						{
-							assert(cudaContext != NULL);
-
-							NV_ENC_OPEN_ENCODE_SESSION_EX_PARAMS sessionParams = { 0 };
-
-							sessionParams.version = NV_ENC_OPEN_ENCODE_SESSION_EX_PARAMS_VER;
-							sessionParams.deviceType = NV_ENC_DEVICE_TYPE_CUDA;
-							sessionParams.device = cudaContext;
-							sessionParams.apiVersion = NVENCAPI_VERSION;
-
-							nv_err = nvenc.nvEncOpenEncodeSessionEx(&sessionParams, &nv_encoder);
-
-							if(nv_err == NV_ENC_SUCCESS)
-							{
-								const GUID codecGUID = NV_ENC_CODEC_AV1_GUID;
-
-								bool have_codec = false;
-
-								uint32_t codec_count = 0;
-								nv_err = nvenc.nvEncGetEncodeGUIDCount(nv_encoder, &codec_count);
-
-								if(nv_err == NV_ENC_SUCCESS && codec_count > 0)
-								{
-									GUID *guids = new GUID[codec_count];
-
-									uint32_t codec_count_again = 0;
-
-									nv_err = nvenc.nvEncGetEncodeGUIDs(nv_encoder, guids, codec_count, &codec_count_again);
-
-									assert(codec_count_again == codec_count);
-
-									for(int i=0; i < codec_count && nv_err == NV_ENC_SUCCESS && !have_codec; i++)
-									{
-										if(guids[i] == codecGUID)
-											have_codec = true;
-									}
-
-									delete[] guids;
-								}
-
-
-								const GUID profileGUID = NV_ENC_AV1_PROFILE_MAIN_GUID;
-
-								bool have_profile = false;
-
-								if(have_codec)
-								{
-									uint32_t profile_count = 0;
-
-									nv_err = nvenc.nvEncGetEncodeProfileGUIDCount(nv_encoder, codecGUID, &profile_count);
-
-									if(nv_err == NV_ENC_SUCCESS && profile_count > 0)
-									{
-										GUID *guids = new GUID[profile_count];
-
-										uint32_t profile_count_again = 0;
-
-										nv_err = nvenc.nvEncGetEncodeProfileGUIDs(nv_encoder, codecGUID, guids, profile_count, &profile_count_again);
-
-										assert(profile_count_again == profile_count);
-
-										for(int i=0; i < profile_count && nv_err == NV_ENC_SUCCESS && !have_profile; i++)
-										{
-											if (guids[i] == profileGUID)
-												have_profile = true;
-										}
-
-										delete[] guids;
-									}
-								}
-
-
-								nv_input_format = (chroma == WEBM_444) ? (bit_depth == 10 ? NV_ENC_BUFFER_FORMAT_YUV444_10BIT : NV_ENC_BUFFER_FORMAT_YUV444) :
-																		(bit_depth == 10 ? NV_ENC_BUFFER_FORMAT_YUV420_10BIT : NV_ENC_BUFFER_FORMAT_IYUV);
-
-								bool have_input_format = false;
-
-								if(have_codec && have_profile)
-								{
-									uint32_t format_count = 0;
-
-									nv_err = nvenc.nvEncGetInputFormatCount(nv_encoder, codecGUID, &format_count);
-
-									if(nv_err == NV_ENC_SUCCESS && format_count > 0)
-									{
-										bool have_nv12 = false;
-										bool have_yv12 = false;
-										bool have_iyuv = false;
-										bool have_yuv444 = false;
-										bool have_yuv420_10bit = false;
-										bool have_yuv444_10bit = false;
-										bool have_argb = false;
-										bool have_argb10 = false;
-										bool have_ayuv = false;
-										bool have_abgr = false;
-										bool have_abgr10 = false;
-										bool have_u8 = false;
-
-										NV_ENC_BUFFER_FORMAT *formats = new NV_ENC_BUFFER_FORMAT[format_count];
-
-										uint32_t format_count_again = 0;
-
-										nv_err = nvenc.nvEncGetInputFormats(nv_encoder, codecGUID, formats, format_count, &format_count_again);
-
-										assert(format_count_again == format_count);
-
-										for(int i=0; i < format_count && nv_err == NV_ENC_SUCCESS; i++)
-										{
-											const NV_ENC_BUFFER_FORMAT &format = formats[i];
-
-											if(format == NV_ENC_BUFFER_FORMAT_NV12)
-												have_nv12 = true;
-											else if(format == NV_ENC_BUFFER_FORMAT_YV12)
-												have_yv12 = true;
-											else if(format == NV_ENC_BUFFER_FORMAT_IYUV)
-												have_iyuv = true;
-											else if(format == NV_ENC_BUFFER_FORMAT_YUV444)
-												have_yuv444 = true;
-											else if(format == NV_ENC_BUFFER_FORMAT_YUV420_10BIT)
-												have_yuv420_10bit = true;
-											else if(format == NV_ENC_BUFFER_FORMAT_YUV444_10BIT)
-												have_yuv444_10bit = true;
-											else if(format == NV_ENC_BUFFER_FORMAT_ARGB)
-												have_argb = true;
-											else if(format == NV_ENC_BUFFER_FORMAT_ARGB10)
-												have_argb10 = true;
-											else if(format == NV_ENC_BUFFER_FORMAT_AYUV)
-												have_ayuv = true;
-											else if(format == NV_ENC_BUFFER_FORMAT_ABGR)
-												have_abgr = true;
-											else if(format == NV_ENC_BUFFER_FORMAT_ABGR10)
-												have_abgr10 = true;
-											else if(format == NV_ENC_BUFFER_FORMAT_U8)
-												have_u8 = true;
-										}
-
-										delete[] formats;
-
-										if(nv_input_format == NV_ENC_BUFFER_FORMAT_IYUV)
-											have_input_format = have_iyuv;
-										else if(nv_input_format == NV_ENC_BUFFER_FORMAT_YUV444)
-											have_input_format = have_yuv444;
-										else if(nv_input_format == NV_ENC_BUFFER_FORMAT_YUV420_10BIT)
-											have_input_format = have_yuv420_10bit;
-										else if(nv_input_format == NV_ENC_BUFFER_FORMAT_YUV444_10BIT)
-											have_input_format = have_yuv444_10bit;
-									}
-								}
-
-
-								const GUID presetGUID = NV_ENC_PRESET_P7_GUID;
-
-								bool have_preset = false;
-
-								if(have_codec && have_profile && have_input_format)
-								{
-									uint32_t preset_count = 0;
-
-									nv_err = nvenc.nvEncGetEncodePresetCount(nv_encoder, codecGUID, &preset_count);
-
-									if(nv_err == NV_ENC_SUCCESS && preset_count > 0)
-									{
-										GUID *guids = new GUID[preset_count];
-
-										uint32_t preset_count_again = 0;
-
-										nv_err = nvenc.nvEncGetEncodeProfileGUIDs(nv_encoder, codecGUID, guids, preset_count, &preset_count_again);
-
-										//assert(preset_count_again == preset_count); // ??
-
-										for(int i=0; i < preset_count_again && nv_err == NV_ENC_SUCCESS && !have_preset; i++)
-										{
-											if (guids[i] == presetGUID)
-												have_preset = true;
-										}
-
-										delete[] guids;
-									}
-								}
-
-								assert(!have_preset); // not sure what's going on here, using NV_ENC_PRESET_P7_GUID anyway
-
-
-								bool have_capabilities = true;
-
-								if(bit_depth == 10)
-								{
-									int can10bit = 0;
-
-									NV_ENC_CAPS_PARAM caps = { 0 };
-									caps.version = NV_ENC_CAPS_PARAM_VER;
-									caps.capsToQuery = NV_ENC_CAPS_SUPPORT_10BIT_ENCODE;
-
-									nvenc.nvEncGetEncodeCaps(nv_encoder, codecGUID, &caps, &can10bit);
-
-									if(!can10bit)
-										have_capabilities = false;
-								}
-
-								if(chroma == WEBM_444)
-								{
-									int can4444 = 0;
-
-									NV_ENC_CAPS_PARAM caps = { 0 };
-									caps.version = NV_ENC_CAPS_PARAM_VER;
-									caps.capsToQuery = NV_ENC_CAPS_SUPPORT_YUV444_ENCODE;
-
-									nvenc.nvEncGetEncodeCaps(nv_encoder, codecGUID, &caps, &can4444);
-
-									if(!can4444)
-										have_capabilities = false;
-								}
-								else if(chroma == WEBM_422)
-								{
-									have_capabilities = false;
-								}
-
-
-								if(nv_err == NV_ENC_SUCCESS && have_codec && have_profile && have_input_format && have_capabilities)
-								{
-									const NV_ENC_TUNING_INFO tuningInfo = NV_ENC_TUNING_INFO_HIGH_QUALITY;
-
-									NV_ENC_PRESET_CONFIG presetConfig = { 0 };
-									presetConfig.version = NV_ENC_PRESET_CONFIG_VER;
-									presetConfig.presetCfg.version = NV_ENC_CONFIG_VER;
-
-									nv_err = nvenc.nvEncGetEncodePresetConfigEx(nv_encoder, codecGUID, presetGUID, tuningInfo, &presetConfig);
-
-									if(nv_err == NV_ENC_SUCCESS)
-									{
-										NV_ENC_CONFIG &config = presetConfig.presetCfg;
-
-										NV_ENC_RC_PARAMS &rcParams = config.rcParams;
-
-										if(method == WEBM_METHOD_CONSTANT_QUALITY || method == WEBM_METHOD_CONSTRAINED_QUALITY)
-										{
-											rcParams.rateControlMode = NV_ENC_PARAMS_RC_CONSTQP;
-
-											rcParams.constQP.qpIntra = rcParams.constQP.qpInterP = rcParams.constQP.qpInterB = (100 - videoQualityP.value.intValue);
-										}
-										else
-										{
-											if(method == WEBM_METHOD_VBR)
-											{
-												rcParams.rateControlMode = NV_ENC_PARAMS_RC_VBR;
-											}
-											else if(method == WEBM_METHOD_BITRATE)
-											{
-												rcParams.rateControlMode = NV_ENC_PARAMS_RC_CBR;
-											}
-											else
-												assert(false);
-
-											rcParams.averageBitRate = bitrateP.value.intValue * 1000;
-											rcParams.maxBitRate = rcParams.averageBitRate * 120 / 100;
-										}
-
-										assert(rcParams.multiPass == NV_ENC_MULTI_PASS_DISABLED);
-										rcParams.multiPass = (twoPassP.value.intValue ? NV_ENC_TWO_PASS_FULL_RESOLUTION : NV_ENC_MULTI_PASS_DISABLED);
-
-										assert(passes == 1); // we set multipass, but does it happen internally?
-
-										NV_ENC_CONFIG_AV1 &av1config = config.encodeCodecConfig.av1Config;
-
-										assert(av1config.chromaFormatIDC == 1); // 4:2:0, 4:4:4 currently not supported
-										av1config.inputBitDepth = (bit_depth == 10 ? NV_ENC_BIT_DEPTH_10 : NV_ENC_BIT_DEPTH_8);
-										av1config.outputBitDepth = av1config.inputBitDepth;
-
-										NV_ENC_INITIALIZE_PARAMS params = { 0 };
-
-										params.version = NV_ENC_INITIALIZE_PARAMS_VER;
-										params.encodeGUID = codecGUID;
-										params.presetGUID = presetGUID;
-										params.encodeWidth = renderParms.inWidth;
-										params.encodeHeight = renderParms.inHeight;
-										params.darWidth = renderParms.inWidth * renderParms.inPixelAspectRatioNumerator;
-										params.darHeight = renderParms.inHeight * renderParms.inPixelAspectRatioDenominator;
-										params.frameRateNum = fps.numerator;
-										params.frameRateDen = fps.denominator;
-										params.enableEncodeAsync = FALSE;
-										params.enablePTD = TRUE;
-										params.reportSliceOffsets = FALSE;
-										params.enableSubFrameWrite = FALSE;
-										params.enableExternalMEHints = FALSE;
-										params.enableMEOnlyMode = FALSE;
-										params.enableWeightedPrediction = FALSE;
-										params.splitEncodeMode = FALSE;
-										params.enableOutputInVidmem = FALSE;
-										params.enableReconFrameOutput = FALSE;
-										params.enableOutputStats = FALSE;
-										params.enableUniDirectionalB = FALSE;
-										params.privDataSize = 0;
-										params.reserved = 0;
-										params.privData = NULL;
-										params.encodeConfig = &config;
-										params.maxEncodeWidth = 0;
-										params.maxEncodeHeight = 0;
-										params.tuningInfo = tuningInfo;
-										params.bufferFormat = NV_ENC_BUFFER_FORMAT_UNDEFINED; // only for DX12
-										params.outputStatsLevel = NV_ENC_OUTPUT_STATS_NONE;
-
-										nv_err = nvenc.nvEncInitializeEncoder(nv_encoder, &params);
-
-										if(nv_err == NV_ENC_SUCCESS)
-										{
-											const int num_buffers = std::min(64, keyframeMaxDistanceP.value.intValue * 4);
-
-											for(int i=0; i < num_buffers && nv_err == NV_ENC_SUCCESS; i++)
-											{
-												NV_ENC_CREATE_INPUT_BUFFER input_params = { 0 };
-
-												input_params.version = NV_ENC_CREATE_INPUT_BUFFER_VER;
-												input_params.width = params.encodeWidth;
-												input_params.height = params.encodeHeight;
-												input_params.bufferFmt = nv_input_format;
-												input_params.inputBuffer = NULL;
-												input_params.pSysMemBuffer = NULL;
-
-												nv_err = nvenc.nvEncCreateInputBuffer(nv_encoder, &input_params);
-
-												if(nv_err == NV_ENC_SUCCESS)
-												{
-													nv_input_buffers.push_back(input_params.inputBuffer);
-
-													NV_ENC_CREATE_BITSTREAM_BUFFER output_params = { 0 };
-
-													output_params.version = NV_ENC_CREATE_BITSTREAM_BUFFER_VER;
-													output_params.reserved = 0;
-													output_params.bitstreamBuffer = NULL;
-
-													nv_err = nvenc.nvEncCreateBitstreamBuffer(nv_encoder, &output_params);
-
-													if(nv_err == NV_ENC_SUCCESS)
-													{
-														nv_output_buffers.push_back(output_params.bitstreamBuffer);
-													}
-												}
-											}
-										}
-									}
-								}
-								else
-								{
-									codecMessage = "NVENC insufficient capabilities";
-
-									if(av1_auto)
-										av1_codec = fallback_codec;
-									else
-										result = exportReturn_InternalError;
-								}
-							}
-
-							if(nv_err != NV_ENC_SUCCESS)
-							{
-								codecMessage = "Failed to initialize NVENC encoder";
-
-								if(av1_auto)
-									av1_codec = fallback_codec;
-								else
-									result = exportReturn_InternalError;
-							}
-						}
-						else
-						{
-							codecMessage = "Failed to create CUDA context";
-
-							if(av1_auto)
-								av1_codec = fallback_codec;
-							else
-								result = exportReturn_InternalError;
-						}
-					}
-					else
-					{
-						codecMessage = "NVENC codec not available";
-
-						if(av1_auto)
-							av1_codec = fallback_codec;
-						else
-							result = exportReturn_InternalError;
-					}
-				#else
-					codecMessage = "NVENC codec not available";
-
-					if(av1_auto)
-						av1_codec = fallback_codec;
-					else
-						result = exportReturn_InternalError;
-#endif // WEBM_HAVE_NVENC
-				}
-
 				if(av1_codec == AV1_CODEC_AOM && result == malNoError)
 				{
 					aom_codec_iface_t* iface = aom_codec_av1_cx();
@@ -3842,9 +3846,13 @@ exSDKExport(
 
 					assert(nv_err == NV_ENC_SUCCESS);
 
+					nv_encoder = NULL;
+
 					CUresult cuErr = cuCtxDestroy(cudaContext);
 
 					assert(cuErr == CUDA_SUCCESS);
+
+					cudaContext = NULL;
 				}
 			#endif // WEBM_HAVE_NVENC
 				else
@@ -3883,6 +3891,11 @@ exSDKExport(
 			}
 		}
 	}
+
+#ifdef WEBM_HAVE_NVENC
+	assert(nv_encoder == NULL);
+	assert(cudaContext == NULL);
+#endif
 	
 	
 	if(muxer_segment != NULL)
