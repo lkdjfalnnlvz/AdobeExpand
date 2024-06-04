@@ -770,7 +770,8 @@ exSDKGenerateDefaultParams(
 prMALError
 exSDKPostProcessParams(
 	exportStdParms			*stdParmsP, 
-	exPostProcessParamsRec	*postProcessParamsRecP)
+	exPostProcessParamsRec	*postProcessParamsRecP,
+	bool haveNVENC)
 {
 	prMALError		result	= malNoError;
 
@@ -959,7 +960,7 @@ exSDKPostProcessParams(
 
 	const char *av1codecStrings[] = { "Auto",
 										"AOM",
-										"NVENC" };
+										(haveNVENC ? "NVENC" : "NVENC (Not available)") };
 
 	exportParamSuite->ClearConstrainedValues(exID, gIdx, WebMAV1Codec);
 
@@ -1634,7 +1635,7 @@ quotedTokenize(const string& str,
 
 
 template <typename T>
-static void SetValue(T &v, string s)
+static void SetValue(T &v, const string &s)
 {
 	std::stringstream ss;
 	
@@ -2519,3 +2520,98 @@ ConfigureAOMEncoderPost(aom_codec_ctx_t *encoder, const char *txt)
 	else
 		return false;
 }
+
+#ifdef WEBM_HAVE_NVENC
+bool
+ConfigureNVENCEncoder(NV_ENC_CONFIG &config, const char *txt)
+{
+	std::vector<string> args;
+
+	if(quotedTokenize(txt, args, " =\t\r\n") && args.size() > 0)
+	{
+		const int num_args = args.size();
+
+		args.push_back(""); // so there's always an i+1
+
+		int i = 0;
+
+		while(i < num_args)
+		{
+			const string &arg = args[i];
+			const string &val = args[i + 1];
+
+			if(arg == "--gopLength")
+			{	SetValue(config.gopLength, val); i++;	}
+
+			else if (arg == "--frameIntervalP")
+			{	SetValue(config.frameIntervalP, val); i++;	}
+
+			else if(arg == "--averageBitRate")
+			{	SetValue(config.rcParams.averageBitRate, val); i++;	}
+
+			else if (arg == "--maxBitRate")
+			{	SetValue(config.rcParams.maxBitRate, val); i++;	}
+
+			else if(arg == "--constQP")
+			{
+				int tmp;
+				SetValue(tmp, val);
+				config.rcParams.constQP.qpIntra = config.rcParams.constQP.qpInterP = config.rcParams.constQP.qpInterB = tmp;
+				i++;
+			}
+
+			else if(arg == "--minQP")
+			{
+				int tmp;
+				SetValue(tmp, val);
+				config.rcParams.minQP.qpIntra = config.rcParams.minQP.qpInterP = config.rcParams.minQP.qpInterB = tmp;
+				config.rcParams.enableMinQP = 1;
+				i++;
+			}
+
+			else if(arg == "--maxQP")
+			{
+				int tmp;
+				SetValue(tmp, val);
+				config.rcParams.maxQP.qpIntra = config.rcParams.maxQP.qpInterP = config.rcParams.maxQP.qpInterB = tmp;
+				config.rcParams.enableMaxQP = 1;
+				i++;
+			}
+
+			else if(arg == "--initialRCQP")
+			{
+				int tmp;
+				SetValue(tmp, val);
+				config.rcParams.initialRCQP.qpIntra = config.rcParams.initialRCQP.qpInterP = config.rcParams.initialRCQP.qpInterB = tmp;
+				config.rcParams.enableInitialRCQP = 1;
+				i++;
+			}
+
+			else if(arg == "--enableAQ")
+			{	config.rcParams.enableAQ = 1;	}
+
+			else if(arg == "--strictGOPTarget")
+			{	config.rcParams.strictGOPTarget = 1;	}
+
+			else if(arg == "--aqStrength")
+			{
+				unsigned int tmp;
+				SetValue(tmp, val);
+				config.rcParams.aqStrength = tmp; i++;
+			}
+
+			else if(arg == "--targetQuality")
+			{	SetValue(config.rcParams.targetQuality, val); i++;	}
+
+			else if(arg == "--outputAnnexBFormat")
+			{	config.encodeCodecConfig.av1Config.outputAnnexBFormat = 1;	}
+
+			i++;
+		}
+
+		return true;
+	}
+	else
+		return false;
+}
+#endif // WEBM_HAVE_NVENC

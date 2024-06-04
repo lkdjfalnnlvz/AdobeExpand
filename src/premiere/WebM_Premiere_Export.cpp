@@ -1686,9 +1686,9 @@ exSDKExport(
 
 							if(nv_err == NV_ENC_SUCCESS)
 							{
-								NV_ENC_CONFIG& config = presetConfig.presetCfg;
+								NV_ENC_CONFIG &config = presetConfig.presetCfg;
 
-								NV_ENC_RC_PARAMS& rcParams = config.rcParams;
+								NV_ENC_RC_PARAMS &rcParams = config.rcParams;
 
 								if(method == WEBM_METHOD_CONSTANT_QUALITY || method == WEBM_METHOD_CONSTRAINED_QUALITY)
 								{
@@ -1716,11 +1716,13 @@ exSDKExport(
 								assert(rcParams.multiPass == NV_ENC_MULTI_PASS_DISABLED);
 								rcParams.multiPass = (twoPassP.value.intValue ? NV_ENC_TWO_PASS_FULL_RESOLUTION : NV_ENC_MULTI_PASS_DISABLED);
 
-								NV_ENC_CONFIG_AV1& av1config = config.encodeCodecConfig.av1Config;
+								NV_ENC_CONFIG_AV1 &av1config = config.encodeCodecConfig.av1Config;
 
 								assert(av1config.chromaFormatIDC == 1); // 4:2:0, 4:4:4 currently not supported
 								av1config.inputBitDepth = (bit_depth == 10 ? NV_ENC_BIT_DEPTH_10 : NV_ENC_BIT_DEPTH_8);
 								av1config.outputBitDepth = av1config.inputBitDepth;
+
+								ConfigureNVENCEncoder(config, customArgs);
 
 								NV_ENC_INITIALIZE_PARAMS params = { 0 };
 
@@ -3966,9 +3968,17 @@ DllExport PREMPLUGENTRY xSDKExport (
 			break;
 
 		case exSelPostProcessParams:
+		{
+		#ifdef WEBM_HAVE_NVENC
+			const bool haveNVENC = (nvenc.version > 0);
+		#else
+			const bool haveNVENC = false;
+		#endif
 			result = exSDKPostProcessParams(stdParmsP,
-											reinterpret_cast<exPostProcessParamsRec*>(param1));
+											reinterpret_cast<exPostProcessParamsRec*>(param1),
+											haveNVENC);
 			break;
+		}
 
 		case exSelGetParamSummary:
 			result = exSDKGetParamSummary(	stdParmsP,

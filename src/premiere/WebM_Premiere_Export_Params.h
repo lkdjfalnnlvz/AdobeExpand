@@ -46,6 +46,10 @@
 #include "vpx/vpx_encoder.h"
 #include "aom/aom_encoder.h"
 
+#ifdef WEBM_HAVE_NVENC
+#include <nvEncodeAPI.h>
+#endif
+
 typedef enum {
 	WEBM_CODEC_VP8 = 0,
 	WEBM_CODEC_VP9,
@@ -128,7 +132,8 @@ exSDKGenerateDefaultParams(
 prMALError
 exSDKPostProcessParams(
 	exportStdParms			*stdParmsP, 
-	exPostProcessParamsRec	*postProcessParamsRecP);
+	exPostProcessParamsRec	*postProcessParamsRecP,
+	bool haveNVENC);
 
 prMALError
 exSDKGetParamSummary(
@@ -148,6 +153,10 @@ bool ConfigureVPXEncoderPost(vpx_codec_ctx_t *encoder, const char *txt);
 bool ConfigureAOMEncoderPre(aom_codec_enc_cfg_t &config, const char *txt);
 
 bool ConfigureAOMEncoderPost(aom_codec_ctx_t *encoder, const char *txt);
+
+#ifdef WEBM_HAVE_NVENC
+bool ConfigureNVENCEncoder(NV_ENC_CONFIG &config, const char *txt);
+#endif
 
 
 #endif // WEBM_PREMIERE_EXPORT_PARAMS_H
