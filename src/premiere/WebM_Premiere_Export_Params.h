@@ -59,9 +59,7 @@ typedef enum {
 typedef enum {
 	AV1_CODEC_AUTO = 0,
 	AV1_CODEC_AOM,
-	AV1_CODEC_NVENC,
-	AV1_CODEC_INTEL,
-	AV1_CODEC_AMD
+	AV1_CODEC_NVENC
 } AV1_Codec;
 
 typedef enum {

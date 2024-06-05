@@ -888,18 +888,16 @@ CopyPixToAOMImg(aom_image_t *img, aom_image_t *alpha_img, const PPixHand &outFra
 
 #ifdef WEBM_HAVE_NVENC
 static void
-CopyPixToNVENCBuf(void *bufferDataPtr, uint32_t width, uint32_t height, uint32_t pitch, NV_ENC_BUFFER_FORMAT format, const PPixHand &outFrame, PrSDKPPixSuite *pixSuite, PrSDKPPix2Suite *pix2Suite)
+NVENCBufToVPXImg(vpx_image_t &vpx_img, void *bufferDataPtr, uint32_t pitch, NV_ENC_BUFFER_FORMAT format, uint32_t width, uint32_t height)
 {
-	vpx_image_t vpx_img;
-
 	assert(format != NV_ENC_BUFFER_FORMAT_NV12);
 
 	vpx_img.fmt = (format == NV_ENC_BUFFER_FORMAT_YV12 ? VPX_IMG_FMT_YV12 :
-					format == NV_ENC_BUFFER_FORMAT_IYUV ? VPX_IMG_FMT_I420 :
-					format == NV_ENC_BUFFER_FORMAT_YUV444 ? VPX_IMG_FMT_I444 :
-					format == NV_ENC_BUFFER_FORMAT_YUV420_10BIT ? VPX_IMG_FMT_I42016 :
-					format == NV_ENC_BUFFER_FORMAT_YUV444_10BIT ? VPX_IMG_FMT_I44416 :
-					VPX_IMG_FMT_NONE);
+		format == NV_ENC_BUFFER_FORMAT_IYUV ? VPX_IMG_FMT_I420 :
+		format == NV_ENC_BUFFER_FORMAT_YUV444 ? VPX_IMG_FMT_I444 :
+		format == NV_ENC_BUFFER_FORMAT_YUV420_10BIT ? VPX_IMG_FMT_I42016 :
+		format == NV_ENC_BUFFER_FORMAT_YUV444_10BIT ? VPX_IMG_FMT_I44416 :
+		VPX_IMG_FMT_NONE);
 
 	assert(vpx_img.fmt != VPX_IMG_FMT_NONE && vpx_img.fmt != VPX_IMG_FMT_YV12);
 
@@ -917,43 +915,74 @@ CopyPixToNVENCBuf(void *bufferDataPtr, uint32_t width, uint32_t height, uint32_t
 	vpx_img.stride[VPX_PLANE_U] = (pitch * (vpx_img.bit_depth > 8 ? 2 : 1) / (subsampled ? 2 : 1));
 	vpx_img.stride[VPX_PLANE_V] = vpx_img.stride[VPX_PLANE_U];
 
-	unsigned char *planarYUV = (unsigned char *)bufferDataPtr;
+	unsigned char* planarYUV = (unsigned char*)bufferDataPtr;
 
 	if(format == NV_ENC_BUFFER_FORMAT_YUV420_10BIT)
 	{
 		// semi-planar?!?
-		planarYUV = (unsigned char *)malloc((vpx_img.stride[VPX_PLANE_Y] * height) + (vpx_img.stride[VPX_PLANE_U] * height / 2) + (vpx_img.stride[VPX_PLANE_V] * height / 2));
+		planarYUV = (unsigned char*)malloc((vpx_img.stride[VPX_PLANE_Y] * height) + (vpx_img.stride[VPX_PLANE_U] * height / 2) + (vpx_img.stride[VPX_PLANE_V] * height / 2));
 
-		if(planarYUV = NULL)
+		if (planarYUV = NULL)
 			return;
 	}
 
-	vpx_img.planes[VPX_PLANE_Y] = (unsigned char *)planarYUV;
+	vpx_img.planes[VPX_PLANE_Y] = (unsigned char*)planarYUV;
 	vpx_img.planes[VPX_PLANE_U] = vpx_img.planes[VPX_PLANE_Y] + (vpx_img.stride[VPX_PLANE_Y] * height);
 	vpx_img.planes[VPX_PLANE_V] = vpx_img.planes[VPX_PLANE_U] + (vpx_img.stride[VPX_PLANE_U] * height / (subsampled ? 2 : 1));
+}
 
-	CopyPixToVPXImg(&vpx_img, NULL, outFrame, pixSuite, pix2Suite);
+static void
+CopyToYUV420_10BIT(vpx_image_t &vpx_img, void *bufferDataPtr, uint32_t pitch)
+{
+	unsigned char *semiPlanarYUV = (unsigned char *)bufferDataPtr;
+
+	assert(vpx_img.stride[VPX_PLANE_Y] == (sizeof(unsigned short) * pitch));
+
+	memcpy(semiPlanarYUV, vpx_img.planes[VPX_PLANE_Y], vpx_img.stride[VPX_PLANE_Y] * vpx_img.d_h);
+
+	for(int y=0; y < (vpx_img.d_h / 2); y++)
+	{
+		unsigned short *pixUV = (unsigned short *)(semiPlanarYUV + (vpx_img.stride[VPX_PLANE_Y] * vpx_img.d_h) + (sizeof(unsigned short) * 2 * pitch * y));
+		const unsigned short *pixU = (const unsigned short*)(vpx_img.planes[VPX_PLANE_U] + (vpx_img.stride[VPX_PLANE_U] * y));
+		const unsigned short *pixV = (const unsigned short*)(vpx_img.planes[VPX_PLANE_V] + (vpx_img.stride[VPX_PLANE_V] * y));
+
+		for(int x=0; y < (vpx_img.d_w / 2); x++)
+		{
+			*pixUV++ = *pixU++;
+			*pixUV++ = *pixV++;
+		}
+	}
+}
+
+static void
+CopyPixToNVENCBuf(void *bufferDataPtr, uint32_t pitch, NV_ENC_BUFFER_FORMAT format,
+					void *alphaBufferDataPtr, uint32_t alphaPitch, NV_ENC_BUFFER_FORMAT alphaFormat,
+					uint32_t width, uint32_t height,
+					const PPixHand &outFrame, PrSDKPPixSuite *pixSuite, PrSDKPPix2Suite *pix2Suite)
+{
+	vpx_image_t vpx_img, alpha_vpx_img;
+
+	NVENCBufToVPXImg(vpx_img, bufferDataPtr, pitch, format, width, height);
+
+	if(alphaBufferDataPtr != NULL)
+		NVENCBufToVPXImg(alpha_vpx_img, alphaBufferDataPtr, alphaPitch, alphaFormat, width, height);
+
+
+	CopyPixToVPXImg(&vpx_img, (alphaBufferDataPtr != NULL ? &alpha_vpx_img : NULL), outFrame, pixSuite, pix2Suite);
+
 
 	if(format == NV_ENC_BUFFER_FORMAT_YUV420_10BIT)
 	{
-		unsigned char* semiPlanarYUV = (unsigned char*)bufferDataPtr;
+		CopyToYUV420_10BIT(vpx_img, bufferDataPtr, pitch);
 
-		memcpy(semiPlanarYUV, planarYUV, vpx_img.stride[VPX_PLANE_Y] * height);
+		free(vpx_img.planes[VPX_PLANE_Y]);
+	}
 
-		for(int y=0; y < (height / 2); y++)
-		{
-			unsigned short *pixUV = (unsigned short *)(semiPlanarYUV + (vpx_img.stride[VPX_PLANE_Y] * height) + (sizeof(unsigned short) * 2 * pitch * y));
-			const unsigned short *pixU = (const unsigned short *)(vpx_img.planes[VPX_PLANE_U] + (vpx_img.stride[VPX_PLANE_U] * y));
-			const unsigned short *pixV = (const unsigned short *)(vpx_img.planes[VPX_PLANE_V] + (vpx_img.stride[VPX_PLANE_V] * y));
+	if(alphaBufferDataPtr != NULL && alphaFormat == NV_ENC_BUFFER_FORMAT_YUV420_10BIT)
+	{
+		CopyToYUV420_10BIT(alpha_vpx_img, alphaBufferDataPtr, alphaPitch);
 
-			for (int x=0; y < (width / 2); x++)
-			{
-				*pixUV++ = *pixU++;
-				*pixUV++ = *pixV++;
-			}
-		}
-
-		free(planarYUV);
+		free(alpha_vpx_img.planes[VPX_PLANE_Y]);
 	}
 }
 #endif // WEBM_HAVE_NVENC
@@ -1417,6 +1446,16 @@ exSDKExport(
 	int nv_output_buffer_idx = 0;
 	std::vector<NV_ENC_OUTPUT_PTR> nv_output_buffers;
 	std::queue<NV_ENC_LOCK_BITSTREAM> nv_encoder_queue;
+
+	void* nv_alpha_encoder = NULL;
+	NV_ENC_BUFFER_FORMAT nv_alpha_input_format = NV_ENC_BUFFER_FORMAT_UNDEFINED;
+	int nv_alpha_input_buffer_idx = 0;
+	std::vector<NV_ENC_INPUT_PTR> nv_alpha_input_buffers;
+	bool nv_alpha_output_available = false;
+	int nv_alpha_output_buffer_idx = 0;
+	std::vector<NV_ENC_OUTPUT_PTR> nv_alpha_output_buffers;
+	std::queue<NV_ENC_LOCK_BITSTREAM> nv_alpha_encoder_queue;
+
 #endif // WEBM_HAVE_NVENC
 
 	if(exportInfoP->exportVideo && video_codec == WEBM_CODEC_AV1 && av1_codec != AV1_CODEC_AOM)
@@ -1449,8 +1488,6 @@ exSDKExport(
 		if(av1_codec == AV1_CODEC_NVENC && result == malNoError)
 		{
 		#ifdef WEBM_HAVE_NVENC
-			assert(!use_alpha); // not ready yet
-
 			if(nvenc.version != 0)
 			{
 				CUresult cuErr = cuCtxCreate(&cudaContext, CU_CTX_SCHED_AUTO, cudaDevice);
@@ -1467,6 +1504,9 @@ exSDKExport(
 					sessionParams.apiVersion = NVENCAPI_VERSION;
 
 					nv_err = nvenc.nvEncOpenEncodeSessionEx(&sessionParams, &nv_encoder);
+
+					if(use_alpha && nv_err == NV_ENC_SUCCESS)
+						nv_err = nvenc.nvEncOpenEncodeSessionEx(&sessionParams, &nv_alpha_encoder);
 
 					if(nv_err == NV_ENC_SUCCESS)
 					{
@@ -1757,12 +1797,39 @@ exSDKExport(
 								params.bufferFormat = NV_ENC_BUFFER_FORMAT_UNDEFINED; // only for DX12
 								params.outputStatsLevel = NV_ENC_OUTPUT_STATS_NONE;
 
+
+								NV_ENC_CONFIG alpha_config;
+								NV_ENC_INITIALIZE_PARAMS alpha_params;
+
+								if(use_alpha)
+								{
+									alpha_config = config;
+
+									alpha_config.monoChromeEncoding = TRUE;
+
+									if(method == WEBM_METHOD_BITRATE || method == WEBM_METHOD_VBR)
+									{
+										config.rcParams.averageBitRate = (config.rcParams.averageBitRate * 3 / 4);
+										config.rcParams.maxBitRate = (config.rcParams.maxBitRate * 3 / 4);
+
+										alpha_config.rcParams.averageBitRate = (config.rcParams.averageBitRate / 3);
+										alpha_config.rcParams.maxBitRate = (config.rcParams.maxBitRate / 3);
+									}
+
+									alpha_params = params;
+
+									alpha_params.enablePTD = params.enablePTD = FALSE;
+
+									nv_alpha_input_format = nv_input_format;
+								}
+
+
 								nv_err = nvenc.nvEncInitializeEncoder(nv_encoder, &params);
+
+								const int num_buffers = std::min(64, keyframeMaxDistanceP.value.intValue * 4);
 
 								if(nv_err == NV_ENC_SUCCESS)
 								{
-									const int num_buffers = std::min(64, keyframeMaxDistanceP.value.intValue * 4);
-
 									for(int i=0; i < num_buffers && nv_err == NV_ENC_SUCCESS; i++)
 									{
 										NV_ENC_CREATE_INPUT_BUFFER input_params = { 0 };
@@ -1791,6 +1858,47 @@ exSDKExport(
 											if(nv_err == NV_ENC_SUCCESS)
 											{
 												nv_output_buffers.push_back(output_params.bitstreamBuffer);
+											}
+										}
+									}
+								}
+
+
+								if(use_alpha && nv_err == NV_ENC_SUCCESS)
+								{
+									nv_err = nvenc.nvEncInitializeEncoder(nv_alpha_encoder, &alpha_params);
+
+									if(nv_err == NV_ENC_SUCCESS)
+									{
+										for(int i=0; i < num_buffers && nv_err == NV_ENC_SUCCESS; i++)
+										{
+											NV_ENC_CREATE_INPUT_BUFFER input_params = { 0 };
+
+											input_params.version = NV_ENC_CREATE_INPUT_BUFFER_VER;
+											input_params.width = alpha_params.encodeWidth;
+											input_params.height = alpha_params.encodeHeight;
+											input_params.bufferFmt = nv_alpha_input_format;
+											input_params.inputBuffer = NULL;
+											input_params.pSysMemBuffer = NULL;
+
+											nv_err = nvenc.nvEncCreateInputBuffer(nv_alpha_encoder, &input_params);
+
+											if(nv_err == NV_ENC_SUCCESS)
+											{
+												nv_alpha_input_buffers.push_back(input_params.inputBuffer);
+
+												NV_ENC_CREATE_BITSTREAM_BUFFER output_params = { 0 };
+
+												output_params.version = NV_ENC_CREATE_BITSTREAM_BUFFER_VER;
+												output_params.reserved = 0;
+												output_params.bitstreamBuffer = NULL;
+
+												nv_err = nvenc.nvEncCreateBitstreamBuffer(nv_alpha_encoder, &output_params);
+
+												if(nv_err == NV_ENC_SUCCESS)
+												{
+													nv_alpha_output_buffers.push_back(output_params.bitstreamBuffer);
+												}
 											}
 										}
 									}
@@ -2198,6 +2306,8 @@ exSDKExport(
 							ConfigureAOMEncoderPost(&aom_alpha_encoder, customArgs);
 					}
 				}
+				else
+					assert(av1_codec == AV1_CODEC_NVENC);
 			}
 		}
 
@@ -2462,7 +2572,7 @@ exSDKExport(
 				muxer_segment->set_mode(mkvmuxer::Segment::kFile);
 				
 				
-				mkvmuxer::SegmentInfo* const info = muxer_segment->GetSegmentInfo();
+				mkvmuxer::SegmentInfo * const info = muxer_segment->GetSegmentInfo();
 				
 				
 				info->set_writing_app("fnord WebM for Premiere, built " __DATE__);
@@ -2489,7 +2599,7 @@ exSDKExport(
 				{
 					vid_track = muxer_segment->AddVideoTrack(renderParms.inWidth, renderParms.inHeight, 1);
 					
-					mkvmuxer::VideoTrack* const video = static_cast<mkvmuxer::VideoTrack *>(muxer_segment->GetTrackByNumber(vid_track));
+					mkvmuxer::VideoTrack * const video = static_cast<mkvmuxer::VideoTrack *>(muxer_segment->GetTrackByNumber(vid_track));
 					
 					video->set_frame_rate((double)fps.numerator / (double)fps.denominator);
 
@@ -2501,10 +2611,10 @@ exSDKExport(
 					{
 						if(av1_codec == AV1_CODEC_AOM)
 						{
-							aom_fixed_buf_t* privateH = aom_codec_get_global_headers(&aom_encoder);
+							aom_fixed_buf_t *privateH = aom_codec_get_global_headers(&aom_encoder);
 
 							if(privateH != NULL)
-								video->SetCodecPrivate((const uint8_t*)privateH->buf, privateH->sz);
+								video->SetCodecPrivate((const uint8_t *)privateH->buf, privateH->sz);
 						}
 					#ifdef WEBM_HAVE_NVENC
 						else if(av1_codec == AV1_CODEC_NVENC)
@@ -2527,7 +2637,7 @@ exSDKExport(
 								NVENCSTATUS err = nvenc.nvEncGetSequenceParams(nv_encoder, &payload);
 
 								if(err == NV_ENC_SUCCESS)
-									video->SetCodecPrivate((const uint8_t*)privateP, payloadSize);
+									video->SetCodecPrivate((const uint8_t *)privateP, payloadSize);
 
 								free(privateP);
 							}
@@ -2918,7 +3028,7 @@ exSDKExport(
 
 									if(vbr_pass)
 									{
-
+										assert(false);
 									}
 									else
 									{
@@ -3040,7 +3150,51 @@ exSDKExport(
 							#ifdef WEBM_HAVE_NVENC
 								else if(av1_codec == AV1_CODEC_NVENC)
 								{
+									while(nv_alpha_output_available)
+									{
+										assert(nv_alpha_output_buffer_idx < nv_alpha_input_buffer_idx);
 
+										if(vbr_pass)
+										{
+											assert(false);
+										}
+										else
+										{
+											NV_ENC_LOCK_BITSTREAM lock;
+
+											lock.version = NV_ENC_LOCK_BITSTREAM_VER;
+											lock.outputBitstream = nv_alpha_output_buffers[nv_alpha_output_buffer_idx];
+
+											nv_err = nvenc.nvEncLockBitstream(nv_alpha_encoder, &lock);
+
+											if(nv_err == NV_ENC_SUCCESS)
+											{
+												NV_ENC_LOCK_BITSTREAM q_lock = lock;
+												q_lock.bitstreamBufferPtr = malloc(q_lock.bitstreamSizeInBytes);
+												if(q_lock.bitstreamBufferPtr == NULL)
+													throw exportReturn_ErrMemory;
+												memcpy(q_lock.bitstreamBufferPtr, lock.bitstreamBufferPtr, q_lock.bitstreamSizeInBytes);
+												nv_alpha_encoder_queue.push(q_lock);
+
+												nvenc.nvEncUnlockBitstream(nv_alpha_encoder, nv_alpha_output_buffers[nv_alpha_output_buffer_idx]);
+
+												nv_alpha_output_buffer_idx++;
+
+												if(nv_alpha_output_buffer_idx == nv_alpha_input_buffer_idx)
+												{
+													nv_alpha_output_buffer_idx = nv_alpha_input_buffer_idx = 0;
+
+													nv_alpha_output_available = false;
+												}
+											}
+											else if(nv_err == NV_ENC_ERR_INVALID_PARAM)
+											{
+												nv_alpha_output_available = false;
+											}
+											else
+												result = exportReturn_InternalError;
+										}
+									}
 								}
 							#endif // WEBM_HAVE_NVENC
 								else
@@ -3261,7 +3415,7 @@ exSDKExport(
 						#ifdef WEBM_HAVE_NVENC
 							else if(av1_codec == AV1_CODEC_NVENC)
 							{
-								if(!nv_encoder_queue.empty())
+								if(!nv_encoder_queue.empty() && (!use_alpha || !nv_alpha_encoder_queue.empty()))
 								{
 									NV_ENC_LOCK_BITSTREAM &lock = nv_encoder_queue.front();
 
@@ -3270,14 +3424,43 @@ exSDKExport(
 									assert(lock.pictureStruct == NV_ENC_PIC_STRUCT_FRAME);
 									assert(lock.pictureType != NV_ENC_PIC_TYPE_I); // not I, IDR!
 
-									bool added = muxer_segment->AddFrame((const uint8_t *)lock.bitstreamBufferPtr, lock.bitstreamSizeInBytes,
+									if(use_alpha)
+									{
+										NV_ENC_LOCK_BITSTREAM &alpha_lock = nv_alpha_encoder_queue.front();
+
+										assert(alpha_lock.outputTimeStamp == (videoTime - exportInfoP->startTime) * fps.numerator / (ticksPerSecond * fps.denominator));
+										assert(alpha_lock.outputDuration == 1);
+										assert(alpha_lock.pictureStruct == NV_ENC_PIC_STRUCT_FRAME);
+										assert(alpha_lock.pictureType != NV_ENC_PIC_TYPE_I);
+
+										if(lock.pictureType == NV_ENC_PIC_TYPE_IDR)
+											assert(alpha_lock.pictureType == NV_ENC_PIC_TYPE_IDR);
+
+										bool added = muxer_segment->AddFrameWithAdditional((const uint8_t*)lock.bitstreamBufferPtr, lock.bitstreamSizeInBytes,
+																							(const uint8_t*)alpha_lock.bitstreamBufferPtr, alpha_lock.bitstreamSizeInBytes, alpha_id,
+																							vid_track, timeStamp,
+																							lock.pictureType == NV_ENC_PIC_TYPE_IDR);
+
+										made_frame = true;
+
+										if(!added)
+											result = exportReturn_InternalError;
+
+										free(alpha_lock.bitstreamBufferPtr);
+
+										nv_alpha_encoder_queue.pop();
+									}
+									else
+									{
+										bool added = muxer_segment->AddFrame((const uint8_t*)lock.bitstreamBufferPtr, lock.bitstreamSizeInBytes,
 																			vid_track, timeStamp,
 																			lock.pictureType == NV_ENC_PIC_TYPE_IDR);
 
-									made_frame = true;
+										made_frame = true;
 
-									if(!added)
-										result = exportReturn_InternalError;
+										if(!added)
+											result = exportReturn_InternalError;
+									}
 									
 									free(lock.bitstreamBufferPtr);
 
@@ -3325,7 +3508,9 @@ exSDKExport(
 								#ifdef WEBM_HAVE_NVENC
 									else if(av1_codec == AV1_CODEC_NVENC)
 									{
+										assert(false); // not doing NVENC 2-pass
 										assert(nv_encoder_queue.empty());
+										assert(nv_alpha_encoder_queue.empty());
 									}
 								#endif // WEBM_HAVE_NVENC
 									else
@@ -3538,7 +3723,7 @@ exSDKExport(
 									#ifdef WEBM_HAVE_NVENC
 										else if(av1_codec == AV1_CODEC_NVENC)
 										{
-											if(nv_input_buffer_idx < nv_input_buffers.size())
+											if(nv_input_buffer_idx < nv_input_buffers.size() && (!use_alpha || nv_alpha_input_buffer_idx < nv_alpha_input_buffers.size()))
 											{
 												NV_ENC_LOCK_INPUT_BUFFER lockParams = { 0 };
 
@@ -3548,13 +3733,28 @@ exSDKExport(
 												lockParams.bufferDataPtr = NULL;
 												lockParams.pitch = 0;
 
+												NV_ENC_LOCK_INPUT_BUFFER alphaLockParams = lockParams;
+
 												nv_err = nvenc.nvEncLockInputBuffer(nv_encoder, &lockParams);
+
+												if(use_alpha && nv_err == NV_ENC_SUCCESS)
+												{
+													alphaLockParams.inputBuffer = nv_alpha_input_buffers[nv_alpha_input_buffer_idx];
+
+													nv_err = nvenc.nvEncLockInputBuffer(nv_alpha_encoder, &alphaLockParams);
+												}
 
 												if(nv_err == NV_ENC_SUCCESS)
 												{
-													CopyPixToNVENCBuf(lockParams.bufferDataPtr, width, height, lockParams.pitch, nv_input_format, renderResult.outFrame, pixSuite, pix2Suite);
+													CopyPixToNVENCBuf(lockParams.bufferDataPtr, lockParams.pitch, nv_input_format,
+																		alphaLockParams.bufferDataPtr, alphaLockParams.pitch, nv_alpha_input_format,
+																		width, height,
+																		renderResult.outFrame, pixSuite, pix2Suite);
 
 													nv_err = nvenc.nvEncUnlockInputBuffer(nv_encoder, nv_input_buffers[nv_input_buffer_idx]);
+
+													if(use_alpha && nv_err == NV_ENC_SUCCESS)
+														nv_err = nvenc.nvEncUnlockInputBuffer(nv_alpha_encoder, nv_alpha_input_buffers[nv_alpha_input_buffer_idx]);
 
 													if(nv_err == NV_ENC_SUCCESS)
 													{
@@ -3564,7 +3764,7 @@ exSDKExport(
 														params.inputWidth = width;
 														params.inputHeight = height;
 														params.inputPitch = lockParams.pitch;
-														params.encodePicFlags = 0; // (nv_input_buffer_idx >= (nv_input_buffers.size() - 1) ? NV_ENC_PIC_FLAG_FORCEIDR : 0);
+														params.encodePicFlags = 0;
 														params.frameIdx = encoder_FrameNumber;
 														params.inputTimeStamp = encoder_timeStamp;
 														params.inputDuration = encoder_duration;
@@ -3573,6 +3773,7 @@ exSDKExport(
 														params.completionEvent = NULL;
 														params.bufferFmt = nv_input_format;
 														params.pictureStruct = NV_ENC_PIC_STRUCT_FRAME;
+														params.pictureType = (use_alpha && (encoder_FrameNumber % (keyframeMaxDistanceP.value.intValue - 1) == 0)) ? NV_ENC_PIC_TYPE_IDR : NV_ENC_PIC_TYPE_P;
 
 														nv_err = nvenc.nvEncEncodePicture(nv_encoder, &params);
 
@@ -3582,13 +3783,52 @@ exSDKExport(
 
 														assert(nv_err != NV_ENC_ERR_ENCODER_BUSY);
 
-														if (nv_err == NV_ENC_SUCCESS)
+														if(nv_err == NV_ENC_SUCCESS)
 														{
 															nv_output_available = true;
 														}
-														else if (nv_err == NV_ENC_ERR_NEED_MORE_INPUT)
+														else if(nv_err == NV_ENC_ERR_NEED_MORE_INPUT)
 														{
 															nv_output_available = false;
+
+															nv_err = NV_ENC_SUCCESS;
+														}
+														else
+															result = exportReturn_InternalError;
+													}
+
+													if(use_alpha && nv_err == NV_ENC_SUCCESS)
+													{
+														NV_ENC_PIC_PARAMS params = { 0 };
+
+														params.version = NV_ENC_PIC_PARAMS_VER;
+														params.inputWidth = width;
+														params.inputHeight = height;
+														params.inputPitch = alphaLockParams.pitch;
+														params.encodePicFlags = 0;
+														params.frameIdx = encoder_FrameNumber;
+														params.inputTimeStamp = encoder_timeStamp;
+														params.inputDuration = encoder_duration;
+														params.inputBuffer = nv_alpha_input_buffers[nv_alpha_input_buffer_idx];
+														params.outputBitstream = nv_alpha_output_buffers[nv_alpha_input_buffer_idx];
+														params.completionEvent = NULL;
+														params.bufferFmt = nv_alpha_input_format;
+														params.pictureStruct = NV_ENC_PIC_STRUCT_FRAME;
+														params.pictureType = (encoder_FrameNumber % (keyframeMaxDistanceP.value.intValue - 1) == 0) ? NV_ENC_PIC_TYPE_IDR : NV_ENC_PIC_TYPE_P;
+
+														nv_err = nvenc.nvEncEncodePicture(nv_alpha_encoder, &params);
+
+														nv_alpha_input_buffer_idx++;
+
+														assert(nv_err != NV_ENC_ERR_ENCODER_BUSY);
+
+														if(nv_err == NV_ENC_SUCCESS)
+														{
+															nv_alpha_output_available = true;
+														}
+														else if(nv_err == NV_ENC_ERR_NEED_MORE_INPUT)
+														{
+															nv_alpha_output_available = false;
 
 															nv_err = NV_ENC_SUCCESS;
 														}
@@ -3601,28 +3841,56 @@ exSDKExport(
 											{
 												assert(false); // seems we never have to do this
 
-												// flush the encoder
-												NV_ENC_PIC_PARAMS params = { 0 };
-
-												params.version = NV_ENC_PIC_PARAMS_VER;
-												params.encodePicFlags = NV_ENC_PIC_FLAG_EOS;
-												params.inputBuffer = NULL;
-												params.outputBitstream = NULL;
-												params.completionEvent = NULL;
-
-												nv_err = nvenc.nvEncEncodePicture(nv_encoder, &params);
-
-												if(nv_err == NV_ENC_SUCCESS)
+												if(nv_input_buffer_idx >= nv_input_buffers.size())
 												{
-													nv_output_available = true;
+													// flush the encoder
+													NV_ENC_PIC_PARAMS params = { 0 };
+
+													params.version = NV_ENC_PIC_PARAMS_VER;
+													params.encodePicFlags = NV_ENC_PIC_FLAG_EOS;
+													params.inputBuffer = NULL;
+													params.outputBitstream = NULL;
+													params.completionEvent = NULL;
+
+													nv_err = nvenc.nvEncEncodePicture(nv_encoder, &params);
+
+													if(nv_err == NV_ENC_SUCCESS)
+													{
+														nv_output_available = true;
+													}
+													else if(nv_err == NV_ENC_ERR_NEED_MORE_INPUT)
+													{
+														nv_output_available = false;
+														assert(false);
+													}
+													else
+														result = exportReturn_InternalError;
 												}
-												else if(nv_err == NV_ENC_ERR_NEED_MORE_INPUT)
+
+												if(use_alpha && nv_alpha_input_buffer_idx >= nv_alpha_input_buffers.size())
 												{
-													nv_output_available = false;
-													assert(false);
+													NV_ENC_PIC_PARAMS params = { 0 };
+
+													params.version = NV_ENC_PIC_PARAMS_VER;
+													params.encodePicFlags = NV_ENC_PIC_FLAG_EOS;
+													params.inputBuffer = NULL;
+													params.outputBitstream = NULL;
+													params.completionEvent = NULL;
+
+													nv_err = nvenc.nvEncEncodePicture(nv_alpha_encoder, &params);
+
+													if(nv_err == NV_ENC_SUCCESS)
+													{
+														nv_alpha_output_available = true;
+													}
+													else if(nv_err == NV_ENC_ERR_NEED_MORE_INPUT)
+													{
+														nv_alpha_output_available = false;
+														assert(false);
+													}
+													else
+														result = exportReturn_InternalError;
 												}
-												else
-													result = exportReturn_InternalError;
 											}
 										}
 									#endif // WEBM_HAVE_NVENC
@@ -3719,6 +3987,23 @@ exSDKExport(
 										}
 										else
 											result = exportReturn_InternalError;
+
+										if(use_alpha && nv_err == NV_ENC_SUCCESS)
+										{
+											nv_err = nvenc.nvEncEncodePicture(nv_alpha_encoder, &params);
+
+											if(nv_err == NV_ENC_SUCCESS)
+											{
+												nv_alpha_output_available = true;
+											}
+											else if(nv_err == NV_ENC_ERR_NEED_MORE_INPUT)
+											{
+												nv_alpha_output_available = false;
+												assert(false);
+											}
+											else
+												result = exportReturn_InternalError;
+										}
 									}
 								#endif // WEBM_HAVE_NVENC
 									else
@@ -3850,6 +4135,26 @@ exSDKExport(
 
 					nv_encoder = NULL;
 
+					if(use_alpha)
+					{
+						assert(nv_alpha_input_buffer_idx == 0);
+						assert(!nv_alpha_output_available);
+						assert(nv_alpha_output_buffer_idx == 0);
+						assert(nv_alpha_encoder_queue.empty());
+
+						for (int i=0; i < nv_alpha_input_buffers.size(); i++)
+							nvenc.nvEncDestroyInputBuffer(nv_alpha_encoder, nv_alpha_input_buffers[i]);
+
+						for (int i=0; i < nv_alpha_output_buffers.size(); i++)
+							nvenc.nvEncDestroyBitstreamBuffer(nv_alpha_encoder, nv_alpha_output_buffers[i]);
+
+						nv_err = nvenc.nvEncDestroyEncoder(nv_alpha_encoder);
+
+						assert(nv_err == NV_ENC_SUCCESS);
+
+						nv_alpha_encoder = NULL;
+					}
+
 					CUresult cuErr = cuCtxDestroy(cudaContext);
 
 					assert(cuErr == CUDA_SUCCESS);
@@ -3896,6 +4201,7 @@ exSDKExport(
 
 #ifdef WEBM_HAVE_NVENC
 	assert(nv_encoder == NULL);
+	assert(nv_alpha_encoder == NULL);
 	assert(cudaContext == NULL);
 #endif
 	
