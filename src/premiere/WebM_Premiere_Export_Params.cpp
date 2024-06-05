@@ -389,7 +389,7 @@ exSDKGenerateDefaultParams(
 	exParamValues av1CodecValues;
 	av1CodecValues.structVersion = 1;
 	av1CodecValues.rangeMin.intValue = AV1_CODEC_AUTO;
-	av1CodecValues.rangeMax.intValue = AV1_CODEC_AMD;
+	av1CodecValues.rangeMax.intValue = AV1_CODEC_NVENC;
 	av1CodecValues.value.intValue = AV1_CODEC_AUTO;
 	av1CodecValues.hidden = kPrTrue;
 	codecValues.hidden = kPrFalse;
