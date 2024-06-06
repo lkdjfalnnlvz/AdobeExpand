@@ -1488,12 +1488,13 @@ exSDKValidateParamChanged (
 		const bool nvenc_codec = (codecValue.value.intValue == WEBM_CODEC_AV1 && av1codecValue.value.intValue == AV1_CODEC_NVENC);
 
 		if(codecValue.value.intValue == WEBM_CODEC_VP8 || nvenc_codec)
-		{
 			samplingValue.value.intValue == WEBM_420;
-			bitDepthValue.value.intValue = VPX_BITS_8;
-		}
 
-		bitDepthValue.disabled = samplingValue.disabled = (codecValue.value.intValue == WEBM_CODEC_VP8 || nvenc_codec);
+		if(codecValue.value.intValue == WEBM_CODEC_VP8)
+			bitDepthValue.value.intValue = VPX_BITS_8;
+
+		bitDepthValue.disabled = (codecValue.value.intValue == WEBM_CODEC_VP8);
+		samplingValue.disabled = (codecValue.value.intValue == WEBM_CODEC_VP8 || nvenc_codec);
 		av1codecValue.hidden = (codecValue.value.intValue != WEBM_CODEC_AV1);
 
 		paramSuite->ChangeParam(exID, gIdx, WebMAV1Codec, &av1codecValue);

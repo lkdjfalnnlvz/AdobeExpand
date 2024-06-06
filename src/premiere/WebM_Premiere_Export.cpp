@@ -904,7 +904,7 @@ NVENCBufToVPXImg(vpx_image_t &vpx_img, void *bufferDataPtr, uint32_t pitch, NV_E
 	vpx_img.d_w = vpx_img.w = width;
 	vpx_img.d_h = vpx_img.h = height;
 
-	vpx_img.bit_depth = (format == NV_ENC_BUFFER_FORMAT_YUV420_10BIT || format == NV_ENC_BUFFER_FORMAT_YUV444_10BIT) ? 10 : 8;
+	vpx_img.bit_depth = (format == NV_ENC_BUFFER_FORMAT_YUV420_10BIT || format == NV_ENC_BUFFER_FORMAT_YUV444_10BIT) ? 16 : 8;
 
 	const bool subsampled = !(format == NV_ENC_BUFFER_FORMAT_YUV444 || format == NV_ENC_BUFFER_FORMAT_YUV444_10BIT);
 
@@ -936,14 +936,14 @@ CopyToYUV420_10BIT(vpx_image_t &vpx_img, void *bufferDataPtr, uint32_t pitch)
 {
 	unsigned char *semiPlanarYUV = (unsigned char *)bufferDataPtr;
 
-	assert(vpx_img.bit_depth == 10);
+	assert(vpx_img.bit_depth == 16);
 	assert(vpx_img.stride[VPX_PLANE_Y] == (sizeof(unsigned char) * pitch));
 
 	memcpy(semiPlanarYUV, vpx_img.planes[VPX_PLANE_Y], vpx_img.stride[VPX_PLANE_Y] * vpx_img.d_h);
 
 	for(int y=0; y < (vpx_img.d_h / 2); y++)
 	{
-		unsigned short *pixUV = (unsigned short *)(semiPlanarYUV + (vpx_img.stride[VPX_PLANE_Y] * vpx_img.d_h) + (sizeof(unsigned short) * 2 * pitch * y));
+		unsigned short *pixUV = (unsigned short *)(semiPlanarYUV + (vpx_img.stride[VPX_PLANE_Y] * vpx_img.d_h) + (sizeof(unsigned char) * pitch * y));
 		const unsigned short *pixU = (const unsigned short *)(vpx_img.planes[VPX_PLANE_U] + (vpx_img.stride[VPX_PLANE_U] * y));
 		const unsigned short *pixV = (const unsigned short *)(vpx_img.planes[VPX_PLANE_V] + (vpx_img.stride[VPX_PLANE_V] * y));
 
@@ -1328,7 +1328,9 @@ exSDKExport(
 	const bool nvenc_codec = (video_codec == WEBM_CODEC_AV1 && av1_codec == AV1_CODEC_NVENC);
 	const WebM_Video_Method method = (WebM_Video_Method)methodP.value.intValue;
 	const WebM_Chroma_Sampling chroma = ((use_vp8 || nvenc_codec) ? WEBM_420 : (WebM_Chroma_Sampling)samplingP.value.intValue);
-	const int bit_depth = ((use_vp8 || nvenc_codec) ? 8 : bitDepthP.value.intValue);
+	const int bit_depth = (use_vp8 ? 8 :
+							(nvenc_codec && bitDepthP.value.intValue == 12) ? 10 :
+							bitDepthP.value.intValue);
 	const bool use_alpha = alphaP.value.intValue;
 
 	char customArgs[256];
@@ -1477,10 +1479,9 @@ exSDKExport(
 
 		const AV1_Codec fallback_codec = AV1_CODEC_AOM;
 
-		if(av1_codec == AV1_CODEC_NVENC && (chroma != WEBM_420 || bit_depth > 8))
+		if(av1_codec == AV1_CODEC_NVENC && (chroma != WEBM_420 || bit_depth > 10))
 		{
 			// 4:4:4 not supported yet
-			// 10-bit is theoretically supported, but appears broken
 			codecMessage = "Incompatible NVENC pixel settings";
 
 			if(av1_auto)
@@ -1545,7 +1546,7 @@ exSDKExport(
 
 						bool have_profile = false;
 
-						if (have_codec)
+						if(have_codec)
 						{
 							uint32_t profile_count = 0;
 
@@ -1911,7 +1912,22 @@ exSDKExport(
 						}
 						else
 						{
-							codecMessage = "NVENC insufficient capabilities";
+							// Maybe you have an Nvidia card but not a 4090...
+
+							nvenc.nvEncDestroyEncoder(nv_encoder);
+
+							nv_encoder = NULL;
+
+							if(use_alpha)
+							{
+								nvenc.nvEncDestroyEncoder(nv_alpha_encoder);
+
+								nv_alpha_encoder = NULL;
+							}
+
+							CUresult cuErr = cuCtxDestroy(cudaContext);
+
+							cudaContext = NULL;
 
 							if(av1_auto)
 								av1_codec = fallback_codec;
@@ -1927,6 +1943,13 @@ exSDKExport(
 					else
 					{
 						codecMessage = "Failed to initialize NVENC encoder";
+
+						if(cudaContext != NULL)
+						{
+							CUresult cuErr = cuCtxDestroy(cudaContext);
+
+							cudaContext = NULL;
+						}
 
 						if(av1_auto)
 							av1_codec = fallback_codec;
