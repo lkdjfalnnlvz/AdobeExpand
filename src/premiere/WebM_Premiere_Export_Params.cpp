@@ -1431,7 +1431,7 @@ exSDKGetParamSummary(
 	if(twoPassP.value.intValue)
 		stream3 << " 2-pass";
 
-	if(codecP.value.intValue == WEBM_CODEC_VP9)
+	if(codecP.value.intValue != WEBM_CODEC_VP8)
 	{
 		if(samplingP.value.intValue == WEBM_444)
 			stream3 << " 4:4:4";
@@ -1476,7 +1476,7 @@ exSDKValidateParamChanged (
 	
 	std::string param = validateParamChangedRecP->changedParamIdentifier;
 	
-	if(param == WebMVideoCodec)
+	if(param == WebMVideoCodec || param == WebMAV1Codec)
 	{
 		exParamValues codecValue, av1codecValue, samplingValue, bitDepthValue;
 		
@@ -1485,9 +1485,17 @@ exSDKValidateParamChanged (
 		paramSuite->GetParamValue(exID, gIdx, WebMVideoSampling, &samplingValue);
 		paramSuite->GetParamValue(exID, gIdx, WebMVideoBitDepth, &bitDepthValue);
 		
-		bitDepthValue.disabled = samplingValue.disabled = (codecValue.value.intValue != WEBM_CODEC_VP9);
+		const bool nvenc_codec = (codecValue.value.intValue == WEBM_CODEC_AV1 && av1codecValue.value.intValue == AV1_CODEC_NVENC);
+
+		if(codecValue.value.intValue == WEBM_CODEC_VP8 || nvenc_codec)
+		{
+			samplingValue.value.intValue == WEBM_420;
+			bitDepthValue.value.intValue = VPX_BITS_8;
+		}
+
+		bitDepthValue.disabled = samplingValue.disabled = (codecValue.value.intValue == WEBM_CODEC_VP8 || nvenc_codec);
 		av1codecValue.hidden = (codecValue.value.intValue != WEBM_CODEC_AV1);
-		
+
 		paramSuite->ChangeParam(exID, gIdx, WebMAV1Codec, &av1codecValue);
 		paramSuite->ChangeParam(exID, gIdx, WebMVideoSampling, &samplingValue);
 		paramSuite->ChangeParam(exID, gIdx, WebMVideoBitDepth, &bitDepthValue);

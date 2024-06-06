@@ -911,18 +911,18 @@ NVENCBufToVPXImg(vpx_image_t &vpx_img, void *bufferDataPtr, uint32_t pitch, NV_E
 	vpx_img.x_chroma_shift = (subsampled ? 1 : 0);
 	vpx_img.y_chroma_shift = (subsampled ? 1 : 0);
 
-	vpx_img.stride[VPX_PLANE_Y] = (pitch * (vpx_img.bit_depth > 8 ? 2 : 1));
-	vpx_img.stride[VPX_PLANE_U] = (pitch * (vpx_img.bit_depth > 8 ? 2 : 1) / (subsampled ? 2 : 1));
+	vpx_img.stride[VPX_PLANE_Y] = pitch; // pitch == rowbytes
+	vpx_img.stride[VPX_PLANE_U] = (pitch / (subsampled ? 2 : 1));
 	vpx_img.stride[VPX_PLANE_V] = vpx_img.stride[VPX_PLANE_U];
 
-	unsigned char* planarYUV = (unsigned char*)bufferDataPtr;
+	unsigned char *planarYUV = (unsigned char*)bufferDataPtr;
 
 	if(format == NV_ENC_BUFFER_FORMAT_YUV420_10BIT)
 	{
 		// semi-planar?!?
 		planarYUV = (unsigned char*)malloc((vpx_img.stride[VPX_PLANE_Y] * height) + (vpx_img.stride[VPX_PLANE_U] * height / 2) + (vpx_img.stride[VPX_PLANE_V] * height / 2));
 
-		if (planarYUV = NULL)
+		if(planarYUV == NULL)
 			return;
 	}
 
@@ -936,17 +936,18 @@ CopyToYUV420_10BIT(vpx_image_t &vpx_img, void *bufferDataPtr, uint32_t pitch)
 {
 	unsigned char *semiPlanarYUV = (unsigned char *)bufferDataPtr;
 
-	assert(vpx_img.stride[VPX_PLANE_Y] == (sizeof(unsigned short) * pitch));
+	assert(vpx_img.bit_depth == 10);
+	assert(vpx_img.stride[VPX_PLANE_Y] == (sizeof(unsigned char) * pitch));
 
 	memcpy(semiPlanarYUV, vpx_img.planes[VPX_PLANE_Y], vpx_img.stride[VPX_PLANE_Y] * vpx_img.d_h);
 
 	for(int y=0; y < (vpx_img.d_h / 2); y++)
 	{
 		unsigned short *pixUV = (unsigned short *)(semiPlanarYUV + (vpx_img.stride[VPX_PLANE_Y] * vpx_img.d_h) + (sizeof(unsigned short) * 2 * pitch * y));
-		const unsigned short *pixU = (const unsigned short*)(vpx_img.planes[VPX_PLANE_U] + (vpx_img.stride[VPX_PLANE_U] * y));
-		const unsigned short *pixV = (const unsigned short*)(vpx_img.planes[VPX_PLANE_V] + (vpx_img.stride[VPX_PLANE_V] * y));
+		const unsigned short *pixU = (const unsigned short *)(vpx_img.planes[VPX_PLANE_U] + (vpx_img.stride[VPX_PLANE_U] * y));
+		const unsigned short *pixV = (const unsigned short *)(vpx_img.planes[VPX_PLANE_V] + (vpx_img.stride[VPX_PLANE_V] * y));
 
-		for(int x=0; y < (vpx_img.d_w / 2); x++)
+		for(int x=0; x < (vpx_img.d_w / 2); x++)
 		{
 			*pixUV++ = *pixU++;
 			*pixUV++ = *pixV++;
@@ -1324,9 +1325,10 @@ exSDKExport(
 	const bool use_vp8 = (video_codec == WEBM_CODEC_VP8);
 	AV1_Codec av1_codec = (AV1_Codec)av1codecP.value.intValue;
 	const bool av1_auto = (av1_codec == AV1_CODEC_AUTO);
+	const bool nvenc_codec = (video_codec == WEBM_CODEC_AV1 && av1_codec == AV1_CODEC_NVENC);
 	const WebM_Video_Method method = (WebM_Video_Method)methodP.value.intValue;
-	const WebM_Chroma_Sampling chroma = (use_vp8 ? WEBM_420 : (WebM_Chroma_Sampling)samplingP.value.intValue);
-	const int bit_depth = (use_vp8 ? 8 : bitDepthP.value.intValue);
+	const WebM_Chroma_Sampling chroma = ((use_vp8 || nvenc_codec) ? WEBM_420 : (WebM_Chroma_Sampling)samplingP.value.intValue);
+	const int bit_depth = ((use_vp8 || nvenc_codec) ? 8 : bitDepthP.value.intValue);
 	const bool use_alpha = alphaP.value.intValue;
 
 	char customArgs[256];
@@ -1475,8 +1477,10 @@ exSDKExport(
 
 		const AV1_Codec fallback_codec = AV1_CODEC_AOM;
 
-		if(av1_codec == AV1_CODEC_NVENC && (chroma != WEBM_420 || bit_depth > 10))
+		if(av1_codec == AV1_CODEC_NVENC && (chroma != WEBM_420 || bit_depth > 8))
 		{
+			// 4:4:4 not supported yet
+			// 10-bit is theoretically supported, but appears broken
 			codecMessage = "Incompatible NVENC pixel settings";
 
 			if(av1_auto)
@@ -3032,7 +3036,7 @@ exSDKExport(
 									}
 									else
 									{
-										NV_ENC_LOCK_BITSTREAM lock;
+										NV_ENC_LOCK_BITSTREAM lock = { 0 };
 
 										lock.version = NV_ENC_LOCK_BITSTREAM_VER;
 										lock.outputBitstream = nv_output_buffers[nv_output_buffer_idx];
@@ -3160,7 +3164,7 @@ exSDKExport(
 										}
 										else
 										{
-											NV_ENC_LOCK_BITSTREAM lock;
+											NV_ENC_LOCK_BITSTREAM lock = { 0 };
 
 											lock.version = NV_ENC_LOCK_BITSTREAM_VER;
 											lock.outputBitstream = nv_alpha_output_buffers[nv_alpha_output_buffer_idx];
