@@ -923,7 +923,7 @@ NVENCBufToVPXImg(vpx_image_t &vpx_img, void *bufferDataPtr, uint32_t pitch, NV_E
 		planarYUV = (unsigned char*)malloc((vpx_img.stride[VPX_PLANE_Y] * height) + (vpx_img.stride[VPX_PLANE_U] * height / 2) + (vpx_img.stride[VPX_PLANE_V] * height / 2));
 
 		if(planarYUV == NULL)
-			return;
+			throw exportReturn_ErrMemory;
 	}
 
 	vpx_img.planes[VPX_PLANE_Y] = (unsigned char*)planarYUV;
@@ -2661,6 +2661,8 @@ exSDKExport(
 
 								free(privateP);
 							}
+							else
+								throw exportReturn_ErrMemory;
 						}
 					#endif // WEBM_HAVE_NVENC
 					}
