@@ -1435,8 +1435,6 @@ exSDKExport(
 
 	bool multipass = (exportInfoP->exportVideo && twoPassP.value.intValue);
 
-	std::string codecMessage;
-
 #ifdef WEBM_HAVE_NVENC
 	CUcontext cudaContext = NULL;
 
@@ -1482,8 +1480,6 @@ exSDKExport(
 		if(av1_codec == AV1_CODEC_NVENC && (chroma != WEBM_420 || bit_depth > 10))
 		{
 			// 4:4:4 not supported yet
-			codecMessage = "Incompatible NVENC pixel settings";
-
 			if(av1_auto)
 				av1_codec = fallback_codec;
 			else
@@ -1942,7 +1938,7 @@ exSDKExport(
 					}
 					else
 					{
-						codecMessage = "Failed to initialize NVENC encoder";
+						// Encoder initialization failed
 
 						if(cudaContext != NULL)
 						{
@@ -1959,7 +1955,7 @@ exSDKExport(
 				}
 				else
 				{
-					codecMessage = "Failed to create CUDA context";
+					// CUDA context failed
 
 					if(av1_auto)
 						av1_codec = fallback_codec;
@@ -1969,7 +1965,7 @@ exSDKExport(
 			}
 			else
 			{
-				codecMessage = "NVENC codec not available";
+				// NVENC not available
 
 				if(av1_auto)
 					av1_codec = fallback_codec;
@@ -1977,7 +1973,7 @@ exSDKExport(
 					result = exportReturn_InternalError;
 			}
 		#else
-			codecMessage = "NVENC codec not available";
+			// NVENV not built
 
 			if(av1_auto)
 				av1_codec = fallback_codec;
@@ -2339,16 +2335,13 @@ exSDKExport(
 		}
 
 
-		if(passes > 1 || !codecMessage.empty())
+		if(passes > 1)
 		{
 			std::string msg = (vbr_pass ? "Analyzing video" : "Encoding WebM movie");
 
-			if (!codecMessage.empty())
-				msg += ", " + codecMessage;
-
 			prUTF16Char utf_str[256];
 
-			utf16ncpy(utf_str, codecMessage.c_str(), 255);
+			utf16ncpy(utf_str, msg.c_str(), 255);
 
 			mySettings->exportProgressSuite->SetProgressString(exID, utf_str);
 		}
