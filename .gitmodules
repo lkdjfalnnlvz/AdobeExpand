@@ -16,3 +16,6 @@
 [submodule "ext/aom"]
 	path = ext/aom
 	url = https://aomedia.googlesource.com/aom
+[submodule "ext/SVT-AV1"]
+	path = ext/SVT-AV1
+	url = https://gitlab.com/AOMediaCodec/SVT-AV1.git
