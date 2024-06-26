@@ -1,6 +1,6 @@
 ///////////////////////////////////////////////////////////////////////////
 //
-// Copyright (c) 2013, Brendan Bolles
+// Copyright (c) 2013-2024, Brendan Bolles
 // 
 // All rights reserved.
 // 

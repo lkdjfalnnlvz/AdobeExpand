@@ -1,6 +1,6 @@
 ///////////////////////////////////////////////////////////////////////////
 //
-// Copyright (c) 2013, Brendan Bolles
+// Copyright (c) 2013-2024, Brendan Bolles
 // 
 // All rights reserved.
 // 
@@ -391,8 +391,8 @@ exSDKGenerateDefaultParams(
 	av1CodecValues.rangeMin.intValue = AV1_CODEC_AUTO;
 	av1CodecValues.rangeMax.intValue = AV1_CODEC_NVENC;
 	av1CodecValues.value.intValue = AV1_CODEC_AUTO;
+	av1CodecValues.disabled = kPrFalse;
 	av1CodecValues.hidden = kPrTrue;
-	codecValues.hidden = kPrFalse;
 
 	exNewParamInfo av1CodecParam;
 	av1CodecParam.structVersion = 1;
@@ -956,16 +956,18 @@ exSDKPostProcessParams(
 
 	AV1_Codec av1codecs[] = { AV1_CODEC_AUTO,
 								AV1_CODEC_AOM,
+								AV1_CODEC_SVT_AV1,
 								AV1_CODEC_NVENC };
 
 	const char *av1codecStrings[] = { "Auto",
 										"AOM",
+										"SVT-AV1",
 										(haveNVENC ? "NVENC" : "NVENC (Not available)") };
 
 	exportParamSuite->ClearConstrainedValues(exID, gIdx, WebMAV1Codec);
 
 	exOneParamValueRec tempAV1Codec;
-	for(int i=0; i < 3; i++)
+	for(int i=0; i < 4; i++)
 	{
 		tempAV1Codec.intValue = av1codecs[i];
 		utf16ncpy(paramString, av1codecStrings[i], 255);
@@ -1423,6 +1425,7 @@ exSDKGetParamSummary(
 	{
 		stream3 << " (";
 		stream3 << (av1codecP.value.intValue == AV1_CODEC_AOM ? "AOM" :
+					av1codecP.value.intValue == AV1_CODEC_SVT_AV1 ? "SVT-AV1" :
 					av1codecP.value.intValue == AV1_CODEC_NVENC ? "NVENC" :
 					"Auto");
 		stream3 << ")";
@@ -2529,6 +2532,48 @@ ConfigureAOMEncoderPost(aom_codec_ctx_t *encoder, const char *txt)
 	else
 		return false;
 }
+
+
+bool
+ConvigureSVTAV1Encoder(EbSvtAv1EncConfiguration &config, const char *txt)
+{
+	std::vector<string> args;
+
+	if(quotedTokenize(txt, args, " =\t\r\n") && args.size() > 0)
+	{
+		bool result = true;
+	
+		const int num_args = args.size();
+
+		args.push_back(""); // so there's always an i+1
+
+		int i = 0;
+
+		while(i < num_args)
+		{
+			const string &arg = args[i];
+			const string &val = args[i + 1];
+			
+			EbErrorType svt_error = svt_av1_enc_parse_parameter(&config, arg.c_str(), val.c_str());
+			
+			if(svt_error == EB_ErrorNone)
+			{
+				i += 2;
+			}
+			else
+			{
+				i += 1;
+			
+				result = false;
+			}
+		}
+		
+		return result;
+	}
+	else
+		return false;
+}
+
 
 #ifdef WEBM_HAVE_NVENC
 bool

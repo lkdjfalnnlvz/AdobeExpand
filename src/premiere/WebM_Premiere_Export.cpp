@@ -1,6 +1,6 @@
 ///////////////////////////////////////////////////////////////////////////
 //
-// Copyright (c) 2013, Brendan Bolles
+// Copyright (c) 2013-2024, Brendan Bolles
 // 
 // All rights reserved.
 // 
@@ -65,6 +65,17 @@
 #include "aom/aom_codec.h"
 #include "aom/aom_encoder.h"
 #include "aom/aomcx.h"
+
+#include "EbSvtAv1Enc.h"
+
+// from EbSequenceControlSet.h
+enum {
+    SVT_SINGLE_PASS, //single pass mode
+    SVT_FIRST_PASS, // first pass of two pass mode
+    SVT_SECOND_PASS, // Second pass of two pass mode
+    SVT_MAX_ENCODE_PASS = 2,
+};
+
 
 #ifdef WEBM_HAVE_NVENC
 #include <cuda.h>
@@ -886,6 +897,118 @@ CopyPixToAOMImg(aom_image_t *img, aom_image_t *alpha_img, const PPixHand &outFra
 }
 
 
+static void
+svt_to_vpx_img(vpx_image_t *vpx_img, EbSvtIOFormat *svt_img)
+{
+	vpx_img->fmt = (svt_img->color_fmt == EB_YUV420 ? (svt_img->bit_depth > 8 ? VPX_IMG_FMT_I42016 : VPX_IMG_FMT_I420) :
+					svt_img->color_fmt == EB_YUV422 ? (svt_img->bit_depth > 8 ? VPX_IMG_FMT_I42216 : VPX_IMG_FMT_I422) :
+					svt_img->color_fmt == EB_YUV444 ? (svt_img->bit_depth > 8 ? VPX_IMG_FMT_I42216 : VPX_IMG_FMT_I444) :
+					VPX_IMG_FMT_NONE);
+					
+	vpx_img->cs = VPX_CS_BT_709;
+	
+	vpx_img->range = VPX_CR_STUDIO_RANGE;
+	
+	vpx_img->w = svt_img->width;
+	vpx_img->h = svt_img->height;
+	vpx_img->bit_depth = svt_img->bit_depth;
+	vpx_img->d_w = svt_img->width;
+	vpx_img->d_h = svt_img->height;
+	vpx_img->r_w = svt_img->width;
+	vpx_img->r_h = svt_img->height;
+	vpx_img->x_chroma_shift = (svt_img->color_fmt == EB_YUV444 ? 0 : 1);
+	vpx_img->y_chroma_shift = (svt_img->color_fmt == EB_YUV420 ? 1 : 0);
+	
+	vpx_img->planes[VPX_PLANE_Y] = svt_img->luma;
+	vpx_img->planes[VPX_PLANE_U] = svt_img->cb;
+	vpx_img->planes[VPX_PLANE_V] = svt_img->cr;
+
+	vpx_img->stride[VPX_PLANE_Y] = svt_img->y_stride * (svt_img->bit_depth > 8 ? 2 : 1);
+	vpx_img->stride[VPX_PLANE_U] = svt_img->cb_stride * (svt_img->bit_depth > 8 ? 2 : 1);
+	vpx_img->stride[VPX_PLANE_V] = svt_img->cr_stride * (svt_img->bit_depth > 8 ? 2 : 1);
+}
+
+static void
+CopyPixToSVTImage(EbSvtIOFormat *svt_img, EbSvtIOFormat *svt_alpha_img, const PPixHand &outFrame, PrSDKPPixSuite *pixSuite, PrSDKPPix2Suite *pix2Suite)
+{
+	vpx_image_t vpx_img, vpx_alpha_img;
+	
+	svt_to_vpx_img(&vpx_img, svt_img);
+	
+	if(svt_alpha_img != NULL)
+		svt_to_vpx_img(&vpx_alpha_img, svt_alpha_img);
+	
+	CopyPixToVPXImg(&vpx_img, (svt_alpha_img == NULL ? NULL : &vpx_alpha_img), outFrame, pixSuite, pix2Suite);
+}
+
+static void
+InitSVTImage(EbBufferHeaderType &header, EbSvtIOFormat &image, uint32_t width, uint32_t height, uint8_t bit_depth, WebM_Chroma_Sampling chroma)
+{
+	header.size = sizeof(EbBufferHeaderType);
+	header.p_buffer = (uint8_t *)&image;
+	header.p_app_private = NULL;
+	header.pic_type = EB_AV1_INVALID_PICTURE;
+	header.flags = 0;
+	header.qp = 0;
+	header.luma_sse = header.cb_sse = header.cr_sse = 0;
+	header.luma_ssim = header.cb_ssim = header.cr_ssim = 0;
+	header.metadata = NULL;
+
+	const size_t y_rowbytes = (bit_depth > 8 ? sizeof(uint16_t) : sizeof(uint8_t)) * width;
+	const size_t y_size = (y_rowbytes * height);
+	const size_t c_rowbytes = (y_rowbytes / (chroma == WEBM_444 ? 1 : 2));
+	const size_t c_size = (c_rowbytes * height / (chroma == WEBM_444 ? 1 : 2));
+
+	image.luma = (uint8_t *)malloc(y_size);
+	if(image.luma == NULL)
+		throw exportReturn_ErrMemory;
+
+	image.cb = (uint8_t *)malloc(c_size);
+	if(image.cb == NULL)
+		throw exportReturn_ErrMemory;
+		
+	image.cr = (uint8_t *)malloc(c_size);
+	if(image.cr == NULL)
+		throw exportReturn_ErrMemory;
+		
+	header.n_alloc_len = header.n_filled_len = (y_size + c_size + c_size);
+
+	image.y_stride = y_rowbytes / (bit_depth > 8 ? 2 : 1);
+	image.cb_stride = c_rowbytes / (bit_depth > 8 ? 2 : 1);
+	image.cr_stride = c_rowbytes / (bit_depth > 8 ? 2 : 1);
+
+	image.width = width;
+	image.height = height;
+
+	image.org_x = 0;
+	image.org_y = 0;
+
+	image.color_fmt = (chroma == WEBM_444 ? EB_YUV444 : EB_YUV420);
+	image.bit_depth = (EbBitDepth)bit_depth; // EB_EIGHT_BIT, EB_TEN_BIT, EB_TWELVE_BIT
+}
+
+static void
+DisposeSVTImage(EbSvtIOFormat &image)
+{
+	if(image.luma != NULL)
+	{
+		free(image.luma);
+		image.luma = NULL;
+	}
+	
+	if(image.cb != NULL)
+	{
+		free(image.cb);
+		image.cb = NULL;
+	}
+	
+	if(image.cr != NULL)
+	{
+		free(image.cr);
+		image.cr = NULL;
+	}
+}
+
 #ifdef WEBM_HAVE_NVENC
 static void
 NVENCBufToVPXImg(vpx_image_t &vpx_img, void *bufferDataPtr, uint32_t pitch, NV_ENC_BUFFER_FORMAT format, uint32_t width, uint32_t height)
@@ -915,18 +1038,18 @@ NVENCBufToVPXImg(vpx_image_t &vpx_img, void *bufferDataPtr, uint32_t pitch, NV_E
 	vpx_img.stride[VPX_PLANE_U] = (pitch / (subsampled ? 2 : 1));
 	vpx_img.stride[VPX_PLANE_V] = vpx_img.stride[VPX_PLANE_U];
 
-	unsigned char *planarYUV = (unsigned char*)bufferDataPtr;
+	unsigned char *planarYUV = (unsigned char *)bufferDataPtr;
 
 	if(format == NV_ENC_BUFFER_FORMAT_YUV420_10BIT)
 	{
 		// semi-planar?!?
-		planarYUV = (unsigned char*)malloc((vpx_img.stride[VPX_PLANE_Y] * height) + (vpx_img.stride[VPX_PLANE_U] * height / 2) + (vpx_img.stride[VPX_PLANE_V] * height / 2));
+		planarYUV = (unsigned char *)malloc((vpx_img.stride[VPX_PLANE_Y] * height) + (vpx_img.stride[VPX_PLANE_U] * height / 2) + (vpx_img.stride[VPX_PLANE_V] * height / 2));
 
 		if(planarYUV == NULL)
 			throw exportReturn_ErrMemory;
 	}
 
-	vpx_img.planes[VPX_PLANE_Y] = (unsigned char*)planarYUV;
+	vpx_img.planes[VPX_PLANE_Y] = (unsigned char *)planarYUV;
 	vpx_img.planes[VPX_PLANE_U] = vpx_img.planes[VPX_PLANE_Y] + (vpx_img.stride[VPX_PLANE_Y] * height);
 	vpx_img.planes[VPX_PLANE_V] = vpx_img.planes[VPX_PLANE_U] + (vpx_img.stride[VPX_PLANE_U] * height / (subsampled ? 2 : 1));
 }
@@ -987,6 +1110,7 @@ CopyPixToNVENCBuf(void *bufferDataPtr, uint32_t pitch, NV_ENC_BUFFER_FORMAT form
 	}
 }
 #endif // WEBM_HAVE_NVENC
+
 
 static void
 vorbis_get_limits(int audioChannels, float sampleRate, long &min_bitrate, long &max_bitrate)
@@ -1457,7 +1581,6 @@ exSDKExport(
 	int nv_alpha_output_buffer_idx = 0;
 	std::vector<NV_ENC_OUTPUT_PTR> nv_alpha_output_buffers;
 	std::queue<NV_ENC_LOCK_BITSTREAM> nv_alpha_encoder_queue;
-
 #endif // WEBM_HAVE_NVENC
 
 	if(exportInfoP->exportVideo && video_codec == WEBM_CODEC_AV1 && av1_codec != AV1_CODEC_AOM)
@@ -1806,7 +1929,7 @@ exSDKExport(
 								{
 									alpha_config = config;
 
-									alpha_config.monoChromeEncoding = TRUE;
+									//alpha_config.monoChromeEncoding = TRUE;
 
 									if(method == WEBM_METHOD_BITRATE || method == WEBM_METHOD_VBR)
 									{
@@ -1981,9 +2104,42 @@ exSDKExport(
 				result = exportReturn_InternalError;
 		#endif // WEBM_HAVE_NVENC
 		}
+		
+		if(av1_codec == AV1_CODEC_SVT_AV1)
+		{
+			bool svt_problem = false;
+		
+			if(chroma != WEBM_444 && (renderParms.inWidth % 2) != 0)
+				svt_problem = true;
+			
+			if(chroma == WEBM_420 && (renderParms.inHeight % 2) != 0)
+				svt_problem = true;
+			
+			if(chroma != WEBM_420)
+				svt_problem = true;
+			
+			if(bit_depth == 12)
+				svt_problem = true;
+			
+			if(use_alpha && method == WEBM_METHOD_BITRATE)
+				svt_problem = true;
+			
+			if(svt_problem)
+			{
+				if(av1_auto)
+					av1_codec = fallback_codec;
+				else
+					result = exportReturn_InternalError;
+			}
+		}
+		
+		if(av1_codec == AV1_CODEC_SVT_AV1 && method != WEBM_METHOD_VBR)
+		{
+			multipass = false;
+		}
 	}
-
-
+	
+	
 	const int passes = (multipass ? 2 : 1);
 	
 	for(int pass = 0; pass < passes && result == malNoError; pass++)
@@ -2011,6 +2167,19 @@ exSDKExport(
 		aom_codec_iter_t aom_alpha_encoder_iter = NULL;
 		std::queue<aom_codec_cx_pkt_t> aom_alpha_encoder_queue;
 		
+		
+		EbErrorType svt_error = EB_ErrorNone;
+		
+		EbComponentType *svt_encoder = NULL;
+		EbBufferHeaderType svt_header;
+		EbSvtIOFormat svt_image;
+		std::queue<EbBufferHeaderType> svt_encoder_queue;
+
+		EbComponentType *svt_alpha_encoder = NULL;
+		EbBufferHeaderType svt_alpha_header;
+		EbSvtIOFormat svt_alpha_image;
+		std::queue<EbBufferHeaderType> svt_alpha_encoder_queue;
+
 		
 		const uint64_t alpha_id = 1;
 		
@@ -2266,7 +2435,7 @@ exSDKExport(
 
 					if(use_alpha)
 					{
-						alpha_config.monochrome = 1;
+						//alpha_config.monochrome = 1;
 
 						alpha_config.g_profile = (bit_depth == 12 ? 2 : 0);
 
@@ -2329,6 +2498,139 @@ exSDKExport(
 							ConfigureAOMEncoderPost(&aom_alpha_encoder, customArgs);
 					}
 				}
+				else if(av1_codec == AV1_CODEC_SVT_AV1 && result == malNoError)
+				{
+					EbSvtAv1EncConfiguration config;
+					
+					svt_error = svt_av1_enc_init_handle(&svt_encoder, NULL, &config);
+					
+					if(svt_error == EB_ErrorNone)
+					{
+						config.source_width = renderParms.inWidth;
+						config.source_height = renderParms.inHeight;
+					
+						config.profile = (bit_depth == 12 || chroma == WEBM_422) ? PROFESSIONAL_PROFILE :
+											chroma == WEBM_444 ? HIGH_PROFILE : MAIN_PROFILE;
+
+						config.encoder_bit_depth = bit_depth;
+
+
+						if(method == WEBM_METHOD_CONSTANT_QUALITY || method == WEBM_METHOD_CONSTRAINED_QUALITY)
+						{
+							assert(passes == 1);
+						
+							config.rate_control_mode = SVT_AV1_RC_MODE_CQP_OR_CRF;
+							
+							const int min_q = config.min_qp_allowed;
+							const int max_q = config.max_qp_allowed;
+
+							// our 0...100 slider will be used to bring max_q down to min_q
+							config.qp = min_q + ((((float)(100 - videoQualityP.value.intValue) / 100.f) * (max_q - min_q)) + 0.5f);
+						}
+						else
+						{
+							if(method == WEBM_METHOD_VBR)
+							{
+								config.rate_control_mode = SVT_AV1_RC_MODE_VBR;
+								
+								assert(config.pred_structure == SVT_AV1_PRED_RANDOM_ACCESS);
+							}
+							else if(method == WEBM_METHOD_BITRATE)
+							{
+								config.rate_control_mode = SVT_AV1_RC_MODE_CBR;
+								
+								config.pred_structure = SVT_AV1_PRED_LOW_DELAY_B; // get an error if I don't set this
+								
+								assert(passes == 1); // "Multi-passes is not support with Low Delay mode"
+							}
+							else
+								assert(false);
+								
+							config.target_bit_rate = bitrateP.value.intValue * 1000;
+						}
+
+						if(passes == 2)
+						{
+							if(vbr_pass)
+							{
+								config.pass = SVT_FIRST_PASS;
+							}
+							else
+							{
+								config.pass = SVT_SECOND_PASS;
+
+								config.rc_stats_buffer.buf = vbr_buffer;
+								config.rc_stats_buffer.sz = vbr_buffer_size;
+							}
+						}
+						else
+							config.pass = SVT_SINGLE_PASS;
+
+
+						config.enc_mode = 2; // slow, but not too slow?
+						
+						config.logical_processors = g_num_cpus;
+
+						config.frame_rate_numerator = fps.numerator;
+						config.frame_rate_denominator = fps.denominator;
+
+						//config.intra_period_length = keyframeMaxDistanceP.value.intValue;
+						
+						ConvigureSVTAV1Encoder(config, customArgs);
+						
+						
+						EbSvtAv1EncConfiguration alpha_config;
+						
+						if(use_alpha)
+						{
+							svt_error = svt_av1_enc_init_handle(&svt_alpha_encoder, NULL, &alpha_config);
+							
+							if(svt_error == EB_ErrorNone)
+							{
+								alpha_config = config;
+								
+								if(method == WEBM_METHOD_VBR || method == WEBM_METHOD_BITRATE)
+								{
+									alpha_config.target_bit_rate = config.target_bit_rate / 3;
+									config.target_bit_rate = config.target_bit_rate * 2 / 3;
+								}
+								
+								if(passes == 2 && !vbr_pass)
+								{
+									alpha_config.rc_stats_buffer.buf = alpha_vbr_buffer;
+									alpha_config.rc_stats_buffer.sz = alpha_vbr_buffer_size;
+								}
+								
+								config.force_key_frames = alpha_config.force_key_frames = TRUE;
+							}
+						}
+						
+						if(svt_error == EB_ErrorNone)
+							svt_error = svt_av1_enc_set_parameter(svt_encoder, &config);
+						
+						if(svt_error == EB_ErrorNone)
+							svt_error = svt_av1_enc_init(svt_encoder);
+						
+						if(svt_error == EB_ErrorNone)
+							InitSVTImage(svt_header, svt_image, renderParms.inWidth, renderParms.inHeight, bit_depth, chroma);
+						
+						if(use_alpha)
+						{
+							if(svt_error == EB_ErrorNone)
+								svt_error = svt_av1_enc_set_parameter(svt_alpha_encoder, &alpha_config);
+							
+							if(svt_error == EB_ErrorNone)
+								svt_error = svt_av1_enc_init(svt_alpha_encoder);
+							
+							if(svt_error == EB_ErrorNone)
+								InitSVTImage(svt_alpha_header, svt_alpha_image, renderParms.inWidth, renderParms.inHeight, bit_depth, chroma);
+						}
+					}
+					
+					
+					if(svt_error != EB_ErrorNone)
+						result = exportReturn_InternalError;
+				}
 				else
 					assert(av1_codec == AV1_CODEC_NVENC);
 			}
@@ -2337,7 +2639,7 @@ exSDKExport(
 
 		if(passes > 1)
 		{
-			std::string msg = (vbr_pass ? "Analyzing video" : "Encoding WebM movie");
+			const std::string msg = (vbr_pass ? "Analyzing video" : "Encoding WebM movie");
 
 			prUTF16Char utf_str[256];
 
@@ -2635,6 +2937,19 @@ exSDKExport(
 
 							if(privateH != NULL)
 								video->SetCodecPrivate((const uint8_t *)privateH->buf, privateH->sz);
+						}
+						else if(av1_codec == AV1_CODEC_SVT_AV1)
+						{
+							EbBufferHeaderType *headerBuf = NULL;
+							
+							svt_error = svt_av1_enc_stream_header(svt_encoder, &headerBuf);
+							
+							if(svt_error == EB_ErrorNone && headerBuf != NULL)
+							{
+								video->SetCodecPrivate((const uint8_t *)headerBuf->p_buffer, headerBuf->n_filled_len);
+								
+								svt_av1_enc_stream_header_release(headerBuf);
+							}
 						}
 					#ifdef WEBM_HAVE_NVENC
 						else if(av1_codec == AV1_CODEC_NVENC)
@@ -2998,7 +3313,7 @@ exSDKExport(
 							
 							if(av1_codec == AV1_CODEC_AOM)
 							{
-								while(const aom_codec_cx_pkt_t* pkt = aom_codec_get_cx_data(&aom_encoder, &aom_encoder_iter))
+								while(const aom_codec_cx_pkt_t *pkt = aom_codec_get_cx_data(&aom_encoder, &aom_encoder_iter))
 								{
 									if(vbr_pass)
 									{
@@ -3035,10 +3350,84 @@ exSDKExport(
 										}
 									}
 
-									assert(pkt->kind != VPX_CODEC_FPMB_STATS_PKT); // don't know what to do with this
+									assert(pkt->kind != AOM_CODEC_FPMB_STATS_PKT); // don't know what to do with this
 
 									if(!copy_buffers)
 										break;
+								}
+							}
+							else if(av1_codec == AV1_CODEC_SVT_AV1)
+							{
+								bool packets_available = true;
+								
+								while(packets_available && result == malNoError)
+								{
+									EbBufferHeaderType *packet = NULL;
+								
+									svt_error = svt_av1_enc_get_packet(svt_encoder, &packet, videoEncoderTime == LONG_LONG_MAX);
+									
+									if(svt_error == EB_ErrorNone && packet != NULL)
+									{
+										EbBufferHeaderType q_packet = *packet;
+									
+										if(vbr_pass)
+										{
+											if(packet->flags & EB_BUFFERFLAG_EOS)
+											{
+												assert(q_packet.p_buffer == NULL && packet->n_filled_len == 0);
+											
+												SvtAv1FixedBuf first_pass_stat;
+											
+												svt_error = svt_av1_enc_get_stream_info(svt_encoder, SVT_AV1_STREAM_INFO_FIRST_PASS_STATS_OUT, &first_pass_stat);
+												
+												if(svt_error == EB_ErrorNone)
+												{
+													q_packet.p_buffer = (uint8_t *)malloc(first_pass_stat.sz);
+													if(q_packet.p_buffer == NULL)
+														throw exportReturn_ErrMemory;
+													memcpy(q_packet.p_buffer, first_pass_stat.buf, first_pass_stat.sz);
+													q_packet.n_alloc_len = q_packet.n_filled_len = first_pass_stat.sz;
+												}
+												else
+													result = exportReturn_InternalError;
+											}
+											else
+											{
+												assert(packet->flags & EB_BUFFERFLAG_HAS_TD);
+											
+												q_packet.p_buffer = (uint8_t *)malloc(q_packet.n_filled_len);
+												if(q_packet.p_buffer == NULL)
+													throw exportReturn_ErrMemory;
+												memcpy(q_packet.p_buffer, packet->p_buffer, q_packet.n_filled_len);
+											}
+										}
+										else
+										{
+											if(!(packet->flags & EB_BUFFERFLAG_EOS))
+											{
+												q_packet.p_buffer = (uint8_t *)malloc(q_packet.n_filled_len);
+												if(q_packet.p_buffer == NULL)
+													throw exportReturn_ErrMemory;
+												memcpy(q_packet.p_buffer, packet->p_buffer, q_packet.n_filled_len);
+											}
+											else
+												assert(packet->p_buffer == NULL && packet->n_filled_len == 0);
+										}
+										
+										// EOS packet of regular pass holds nothing, for vbr pass tells up to write info
+										if(!(packet->flags & EB_BUFFERFLAG_EOS) || vbr_pass)
+											svt_encoder_queue.push(q_packet);
+										
+										svt_av1_enc_release_out_buffer(&packet);
+									}
+									else if(svt_error == EB_NoErrorEmptyQueue)
+									{
+										packets_available = false;
+									}
+									else
+									{
+										result = exportReturn_InternalError;
+									}
 								}
 							}
 						#ifdef WEBM_HAVE_NVENC
@@ -3139,7 +3528,7 @@ exSDKExport(
 								
 								if(av1_codec == AV1_CODEC_AOM)
 								{
-									while(const aom_codec_cx_pkt_t* pkt = aom_codec_get_cx_data(&aom_alpha_encoder, &aom_alpha_encoder_iter))
+									while(const aom_codec_cx_pkt_t *pkt = aom_codec_get_cx_data(&aom_alpha_encoder, &aom_alpha_encoder_iter))
 									{
 										if(vbr_pass)
 										{
@@ -3167,6 +3556,80 @@ exSDKExport(
 										}
 
 										assert(pkt->kind != AOM_CODEC_FPMB_STATS_PKT); // don't know what to do with this
+									}
+								}
+								else if(av1_codec == AV1_CODEC_SVT_AV1)
+								{
+									bool packets_available = true;
+									
+									while(packets_available && result == malNoError)
+									{
+										EbBufferHeaderType *packet = NULL;
+									
+										svt_error = svt_av1_enc_get_packet(svt_alpha_encoder, &packet, videoEncoderTime == LONG_LONG_MAX);
+										
+										if(svt_error == EB_ErrorNone && packet != NULL)
+										{
+											EbBufferHeaderType q_packet = *packet;
+										
+											if(vbr_pass)
+											{
+												if(packet->flags & EB_BUFFERFLAG_EOS)
+												{
+													assert(q_packet.p_buffer == NULL && packet->n_filled_len == 0);
+												
+													SvtAv1FixedBuf first_pass_stat;
+												
+													svt_error = svt_av1_enc_get_stream_info(svt_alpha_encoder, SVT_AV1_STREAM_INFO_FIRST_PASS_STATS_OUT, &first_pass_stat);
+													
+													if(svt_error == EB_ErrorNone)
+													{
+														q_packet.p_buffer = (uint8_t *)malloc(first_pass_stat.sz);
+														if(q_packet.p_buffer == NULL)
+															throw exportReturn_ErrMemory;
+														memcpy(q_packet.p_buffer, first_pass_stat.buf, first_pass_stat.sz);
+														q_packet.n_alloc_len = q_packet.n_filled_len = first_pass_stat.sz;
+													}
+													else
+														result = exportReturn_InternalError;
+												}
+												else
+												{
+													assert(packet->flags & EB_BUFFERFLAG_HAS_TD);
+												
+													q_packet.p_buffer = (uint8_t *)malloc(q_packet.n_filled_len);
+													if(q_packet.p_buffer == NULL)
+														throw exportReturn_ErrMemory;
+													memcpy(q_packet.p_buffer, packet->p_buffer, q_packet.n_filled_len);
+												}
+											}
+											else
+											{
+												if(!(packet->flags & EB_BUFFERFLAG_EOS))
+												{
+													q_packet.p_buffer = (uint8_t *)malloc(q_packet.n_filled_len);
+													if(q_packet.p_buffer == NULL)
+														throw exportReturn_ErrMemory;
+													memcpy(q_packet.p_buffer, packet->p_buffer, q_packet.n_filled_len);
+												}
+												else
+													assert(packet->p_buffer == NULL && packet->n_filled_len == 0);
+											}
+											
+											// EOS packet of regular pass holds nothing, for vbr pass tells up to write info
+											if(!(packet->flags & EB_BUFFERFLAG_EOS) || vbr_pass)
+												svt_alpha_encoder_queue.push(q_packet);
+											
+											svt_av1_enc_release_out_buffer(&packet);
+										}
+										else if(svt_error == EB_NoErrorEmptyQueue)
+										{
+											packets_available = false;
+										}
+										else
+										{
+											result = exportReturn_InternalError;
+										}
 									}
 								}
 							#ifdef WEBM_HAVE_NVENC
@@ -3338,8 +3801,8 @@ exSDKExport(
 							{
 								if(!aom_encoder_queue.empty() && (!use_alpha || !aom_alpha_encoder_queue.empty()))
 								{
-									aom_codec_cx_pkt_t* pkt = NULL;
-									aom_codec_cx_pkt_t* alpha_pkt = NULL;
+									aom_codec_cx_pkt_t *pkt = NULL;
+									aom_codec_cx_pkt_t *alpha_pkt = NULL;
 
 									aom_codec_cx_pkt_t pkt_data;
 									aom_codec_cx_pkt_t alpha_pkt_data;
@@ -3431,6 +3894,87 @@ exSDKExport(
 										assert(copy_buffers);
 										free(vbr_pass ? alpha_pkt_data.data.twopass_stats.buf : alpha_pkt_data.data.frame.buf);
 										aom_alpha_encoder_queue.pop();
+									}
+								}
+							}
+							else if(av1_codec == AV1_CODEC_SVT_AV1)
+							{
+								if(!svt_encoder_queue.empty() && (!use_alpha || !svt_alpha_encoder_queue.empty()))
+								{
+									EbBufferHeaderType &packet = svt_encoder_queue.front();
+									EbBufferHeaderType alpha_packet;
+									
+									if(use_alpha)
+										alpha_packet = svt_alpha_encoder_queue.front();
+									
+									if(vbr_pass)
+									{
+										if(vbr_buffer_size == 0)
+											vbr_buffer = memorySuite->NewPtr(packet.n_filled_len);
+										else
+											memorySuite->SetPtrSize(&vbr_buffer, vbr_buffer_size + packet.n_filled_len);
+
+										memcpy(&vbr_buffer[vbr_buffer_size], packet.p_buffer, packet.n_filled_len);
+
+										vbr_buffer_size += packet.n_filled_len;
+										
+										if(use_alpha)
+										{
+											if(alpha_vbr_buffer_size == 0)
+												alpha_vbr_buffer = memorySuite->NewPtr(alpha_packet.n_filled_len);
+											else
+												memorySuite->SetPtrSize(&alpha_vbr_buffer, alpha_vbr_buffer_size + alpha_packet.n_filled_len);
+
+											memcpy(&alpha_vbr_buffer[alpha_vbr_buffer_size], alpha_packet.p_buffer, alpha_packet.n_filled_len);
+
+											alpha_vbr_buffer_size += alpha_packet.n_filled_len;
+										}
+
+										made_frame = true;
+									}
+									else
+									{
+										assert(packet.pts == (videoTime - exportInfoP->startTime) * fps.numerator / (ticksPerSecond * fps.denominator));
+									
+										if(use_alpha)
+										{
+											assert(alpha_packet.pts == (videoTime - exportInfoP->startTime) * fps.numerator / (ticksPerSecond * fps.denominator));
+
+											if(packet.pic_type == EB_AV1_KEY_PICTURE)
+												assert(alpha_packet.pic_type == EB_AV1_KEY_PICTURE);
+
+											bool added = muxer_segment->AddFrameWithAdditional((const uint8_t*)packet.p_buffer, packet.n_filled_len,
+																								(const uint8_t*)alpha_packet.p_buffer, alpha_packet.n_filled_len, alpha_id,
+																								vid_track, timeStamp,
+																								packet.pic_type == EB_AV1_KEY_PICTURE);
+
+											made_frame = true;
+
+											if(!added)
+												result = exportReturn_InternalError;
+										}
+										else
+										{
+											bool added = muxer_segment->AddFrame((const uint8_t*)packet.p_buffer, packet.n_filled_len,
+																					vid_track, timeStamp,
+																					packet.pic_type == EB_AV1_KEY_PICTURE);
+
+											made_frame = true;
+
+											if(!added)
+												result = exportReturn_InternalError;
+										}
+									}
+									
+									free(packet.p_buffer);
+									
+									svt_encoder_queue.pop();
+									
+									if(use_alpha)
+									{
+										free(alpha_packet.p_buffer);
+										
+										svt_alpha_encoder_queue.pop();
 									}
 								}
 							}
@@ -3526,6 +4070,11 @@ exSDKExport(
 									{
 										assert(aom_encoder_queue.empty());
 										assert(aom_alpha_encoder_queue.empty());
+									}
+									else if(av1_codec == AV1_CODEC_SVT_AV1)
+									{
+										assert(svt_encoder_queue.size() == 1); // already have our summary packet ready
+										assert(!use_alpha || svt_alpha_encoder_queue.size() == 1);
 									}
 								#ifdef WEBM_HAVE_NVENC
 									else if(av1_codec == AV1_CODEC_NVENC)
@@ -3741,6 +4290,30 @@ exSDKExport(
 											}
 											else
 												result = exportReturn_ErrMemory;
+										}
+										else if(av1_codec == AV1_CODEC_SVT_AV1)
+										{
+											CopyPixToSVTImage(&svt_image, (use_alpha ? &svt_alpha_image : NULL), renderResult.outFrame, pixSuite, pix2Suite);
+											
+											svt_header.n_tick_count = svt_header.dts = svt_header.pts = encoder_FrameNumber;
+											svt_header.flags = 0;
+											svt_header.pic_type = (use_alpha ? (encoder_FrameNumber % keyframeMaxDistanceP.value.intValue == 0 ? EB_AV1_KEY_PICTURE : EB_AV1_INTER_PICTURE) : EB_AV1_INVALID_PICTURE);
+
+											svt_error = svt_av1_enc_send_picture(svt_encoder, &svt_header);
+											
+											if(use_alpha && svt_error == EB_ErrorNone)
+											{
+												svt_alpha_header.n_tick_count = svt_alpha_header.dts = svt_alpha_header.pts = encoder_FrameNumber;
+												svt_alpha_header.flags = 0;
+												svt_alpha_header.pic_type = svt_header.pic_type;
+
+												svt_error = svt_av1_enc_send_picture(svt_alpha_encoder, &svt_alpha_header);
+											}
+											
+											if(svt_error == EB_ErrorNone)
+												videoEncoderTime += frameRateP.value.timeValue;
+											else
+												result = exportReturn_InternalError;
 										}
 									#ifdef WEBM_HAVE_NVENC
 										else if(av1_codec == AV1_CODEC_NVENC)
@@ -3983,6 +4556,26 @@ exSDKExport(
 												result = exportReturn_InternalError;
 										}
 									}
+									else if(av1_codec == AV1_CODEC_SVT_AV1)
+									{
+										svt_header.pts = 0;
+										svt_header.flags = EB_BUFFERFLAG_EOS;
+
+										svt_error = svt_av1_enc_send_picture(svt_encoder, &svt_header);
+										
+										if(use_alpha && svt_error == EB_ErrorNone)
+										{
+											svt_alpha_header.pts = 0;
+											svt_alpha_header.flags = EB_BUFFERFLAG_EOS;
+
+											svt_error = svt_av1_enc_send_picture(svt_alpha_encoder, &svt_alpha_header);
+										}
+										
+										if(svt_error == EB_ErrorNone)
+											videoEncoderTime = LONG_LONG_MAX;
+										else
+											result = exportReturn_InternalError;
+									}
 								#ifdef WEBM_HAVE_NVENC
 									else if(av1_codec == AV1_CODEC_NVENC)
 									{
@@ -4135,6 +4728,39 @@ exSDKExport(
 
 						aom_codec_err_t alpha_destroy_err = aom_codec_destroy(&aom_alpha_encoder);
 						assert(alpha_destroy_err == AOM_CODEC_OK);
+					}
+				}
+				else if(av1_codec == AV1_CODEC_SVT_AV1)
+				{
+					if(result == malNoError)
+					{
+						EbBufferHeaderType *packet = NULL;
+						assert(EB_NoErrorEmptyQueue == svt_av1_enc_get_packet(svt_encoder, &packet, TRUE) && svt_encoder_queue.empty());
+					}
+					
+					DisposeSVTImage(svt_image);
+
+					svt_error = svt_av1_enc_deinit(svt_encoder);
+					assert(svt_error == EB_ErrorNone);
+					
+					svt_error = svt_av1_enc_deinit_handle(svt_encoder);
+					assert(svt_error == EB_ErrorNone);
+					
+					if(use_alpha)
+					{
+						if(result == malNoError)
+						{
+							EbBufferHeaderType *packet = NULL;
+							assert(EB_NoErrorEmptyQueue == svt_av1_enc_get_packet(svt_alpha_encoder, &packet, TRUE) && svt_alpha_encoder_queue.empty());
+						}
+						
+						DisposeSVTImage(svt_alpha_image);
+
+						svt_error = svt_av1_enc_deinit(svt_alpha_encoder);
+						assert(svt_error == EB_ErrorNone);
+						
+						svt_error = svt_av1_enc_deinit_handle(svt_alpha_encoder);
+						assert(svt_error == EB_ErrorNone);
 					}
 				}
 			#ifdef WEBM_HAVE_NVENC

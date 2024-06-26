@@ -1,6 +1,6 @@
 ///////////////////////////////////////////////////////////////////////////
 //
-// Copyright (c) 2013, Brendan Bolles
+// Copyright (c) 2013-2024, Brendan Bolles
 // 
 // All rights reserved.
 // 
@@ -46,6 +46,8 @@
 #include "vpx/vpx_encoder.h"
 #include "aom/aom_encoder.h"
 
+#include "EbSvtAv1Enc.h"
+
 #ifdef WEBM_HAVE_NVENC
 #include <nvEncodeAPI.h>
 #endif
@@ -59,6 +61,7 @@ typedef enum {
 typedef enum {
 	AV1_CODEC_AUTO = 0,
 	AV1_CODEC_AOM,
+	AV1_CODEC_SVT_AV1,
 	AV1_CODEC_NVENC
 } AV1_Codec;
 
@@ -151,6 +154,8 @@ bool ConfigureVPXEncoderPost(vpx_codec_ctx_t *encoder, const char *txt);
 bool ConfigureAOMEncoderPre(aom_codec_enc_cfg_t &config, const char *txt);
 
 bool ConfigureAOMEncoderPost(aom_codec_ctx_t *encoder, const char *txt);
+
+bool ConvigureSVTAV1Encoder(EbSvtAv1EncConfiguration &config, const char *txt);
 
 #ifdef WEBM_HAVE_NVENC
 bool ConfigureNVENCEncoder(NV_ENC_CONFIG &config, const char *txt);
