@@ -992,7 +992,7 @@ CopyPixToSVTImage(EbSvtIOFormat *svt_img, EbSvtIOFormat *svt_alpha_img, WebM_Col
 		svt_to_vpx_img(&vpx_alpha_img, svt_alpha_img);
 		
 		vpx_alpha_img.cs = VPX_CS_UNKNOWN;
-		vpx_img.range = VPX_CR_FULL_RANGE;
+		vpx_alpha_img.range = VPX_CR_FULL_RANGE;
 	}
 	
 	CopyPixToVPXImg(&vpx_img, (svt_alpha_img == NULL ? NULL : &vpx_alpha_img), outFrame, pixSuite, pix2Suite);
@@ -1138,15 +1138,24 @@ CopyToYUV420_10BIT(vpx_image_t &vpx_img, void *bufferDataPtr, uint32_t pitch)
 static void
 CopyPixToNVENCBuf(void *bufferDataPtr, uint32_t pitch, NV_ENC_BUFFER_FORMAT format,
 					void *alphaBufferDataPtr, uint32_t alphaPitch, NV_ENC_BUFFER_FORMAT alphaFormat,
-					uint32_t width, uint32_t height, WebM_Colorspace colorspace,
+					uint32_t width, uint32_t height, WebM_ColorSpace colorSpace,
 					const PPixHand &outFrame, PrSDKPPixSuite *pixSuite, PrSDKPPix2Suite *pix2Suite)
 {
 	vpx_image_t vpx_img, alpha_vpx_img;
 
 	NVENCBufToVPXImg(vpx_img, bufferDataPtr, pitch, format, width, height);
 
+	vpx_img.cs = (colorSpace == WEBM_REC709 ? VPX_CS_BT_709 : VPX_CS_BT_601);
+	vpx_img.range = VPX_CR_STUDIO_RANGE;
+
+
 	if(alphaBufferDataPtr != NULL)
+	{
 		NVENCBufToVPXImg(alpha_vpx_img, alphaBufferDataPtr, alphaPitch, alphaFormat, width, height);
+
+		alpha_vpx_img.cs = VPX_CS_UNKNOWN;
+		alpha_vpx_img.range = VPX_CR_FULL_RANGE;
+	}
 
 
 	CopyPixToVPXImg(&vpx_img, (alphaBufferDataPtr != NULL ? &alpha_vpx_img : NULL), outFrame, pixSuite, pix2Suite);
@@ -1944,6 +1953,11 @@ exSDKExport(
 								assert(av1config.chromaFormatIDC == 1); // 4:2:0, 4:4:4 currently not supported
 								av1config.inputBitDepth = (bit_depth == 10 ? NV_ENC_BIT_DEPTH_10 : NV_ENC_BIT_DEPTH_8);
 								av1config.outputBitDepth = av1config.inputBitDepth;
+								av1config.colorPrimaries = NV_ENC_VUI_COLOR_PRIMARIES_BT709;
+								av1config.transferCharacteristics = NV_ENC_VUI_TRANSFER_CHARACTERISTIC_BT709;
+								av1config.matrixCoefficients = (colorSpace == WEBM_REC709 ? NV_ENC_VUI_MATRIX_COEFFS_BT709 : NV_ENC_VUI_MATRIX_COEFFS_BT470BG);
+								av1config.colorRange = 0;
+
 
 								ConfigureNVENCEncoder(config, customArgs);
 
@@ -1989,6 +2003,11 @@ exSDKExport(
 									alpha_config = config;
 
 									//alpha_config.monoChromeEncoding = TRUE;
+
+									alpha_config.encodeCodecConfig.av1Config.colorPrimaries = NV_ENC_VUI_COLOR_PRIMARIES_UNDEFINED;
+									alpha_config.encodeCodecConfig.av1Config.transferCharacteristics = NV_ENC_VUI_TRANSFER_CHARACTERISTIC_UNDEFINED;
+									alpha_config.encodeCodecConfig.av1Config.matrixCoefficients = NV_ENC_VUI_MATRIX_COEFFS_UNSPECIFIED;
+									alpha_config.encodeCodecConfig.av1Config.colorRange = 1;
 
 									if(method == WEBM_METHOD_BITRATE || method == WEBM_METHOD_VBR)
 									{
@@ -2402,6 +2421,9 @@ exSDKExport(
 					if(use_alpha)
 						ConfigureVPXEncoderPost(&vpx_alpha_encoder, customArgs);
 				}
+
+				if(vpx_codec_err != VPX_CODEC_OK)
+					result = exportReturn_InternalError;
 			}
 			else
 			{
@@ -2556,6 +2578,9 @@ exSDKExport(
 						if(use_alpha)
 							ConfigureAOMEncoderPost(&aom_alpha_encoder, customArgs);
 					}
+
+					if(aom_codec_err != AOM_CODEC_OK)
+						result = exportReturn_InternalError;
 				}
 				else if(av1_codec == AV1_CODEC_SVT_AV1 && result == malNoError)
 				{
@@ -2929,10 +2954,13 @@ exSDKExport(
 				if(pr_audio_buffer[i] == NULL)
 					throw exportReturn_ErrMemory;
 			}
+
+			if(v_err != OV_OK)
+				result = exportReturn_InternalError;
 		}
 		
 		
-		if(vpx_codec_err == VPX_CODEC_OK && aom_codec_err == AOM_CODEC_OK && v_err == OV_OK && result == malNoError)
+		if(result == malNoError)
 		{
 			// I'd say think about lowering this to get better precision,
 			// but I get some messed up stuff when I do that.  Maybe a bug in the muxer?
@@ -3092,7 +3120,7 @@ exSDKExport(
 				
 					audio_track = muxer_segment->AddAudioTrack(sampleRateP.value.floatValue, audioChannels, 2);
 					
-					mkvmuxer::AudioTrack* const audio = static_cast<mkvmuxer::AudioTrack *>(muxer_segment->GetTrackByNumber(audio_track));
+					mkvmuxer::AudioTrack * const audio = static_cast<mkvmuxer::AudioTrack *>(muxer_segment->GetTrackByNumber(audio_track));
 					
 					audio->set_codec_id(audio_codec == WEBM_CODEC_OPUS ? mkvmuxer::Tracks::kOpusCodecId :
 										mkvmuxer::Tracks::kVorbisCodecId);
@@ -3216,6 +3244,8 @@ exSDKExport(
 					}
 					else
 					{
+						assert(audio_codec == WEBM_CODEC_VORBIS);
+
 						uint64_t op_timeStamp = op.granulepos * S2NS / (uint64_t)sampleRateP.value.floatValue;
 					
 						while(op_timeStamp <= timeStamp && op.granulepos < endAudioSample && result == malNoError)
@@ -4427,7 +4457,7 @@ exSDKExport(
 												{
 													CopyPixToNVENCBuf(lockParams.bufferDataPtr, lockParams.pitch, nv_input_format,
 																		alphaLockParams.bufferDataPtr, alphaLockParams.pitch, nv_alpha_input_format,
-																		width, height,
+																		width, height, colorSpace,
 																		renderResult.outFrame, pixSuite, pix2Suite);
 
 													nv_err = nvenc.nvEncUnlockInputBuffer(nv_encoder, nv_input_buffers[nv_input_buffer_idx]);
