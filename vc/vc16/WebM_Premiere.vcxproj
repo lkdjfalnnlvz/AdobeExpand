@@ -95,7 +95,6 @@
       <ImportLibrary>.\Debug/WebM.lib</ImportLibrary>
       <TargetMachine>MachineX64</TargetMachine>
       <AdditionalLibraryDirectories>$(Platform)\$(Configuration);ext\build\$(Platform)\$(Configuration);ext\libvpx_build\build\$(Platform)\$(Configuration);ext\aom_build\build\$(Platform)\$(Configuration);ext\SVT-AV1_$(Platform)\Bin\$(Configuration);ext\opus\build\$(Platform)\$(Configuration);$(CUDA_PATH_V12_4)\lib\$(Platform);..\..\ext\Video_Codec_SDK_12.2.72\Lib\$(Platform);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <OutputFile>C:\Program Files\Adobe\Common\Plug-ins\7.0\MediaCore\WebM.prm</OutputFile>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">

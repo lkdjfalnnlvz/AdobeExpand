@@ -2211,8 +2211,9 @@ exSDKExport(
 			}
 		}
 		
-		if(av1_codec == AV1_CODEC_SVT_AV1 && method != WEBM_METHOD_VBR)
+		if(av1_codec == AV1_CODEC_SVT_AV1)
 		{
+			// 2-pass should work with WEBM_METHOD_VBR, but I keep getting crashes
 			multipass = false;
 		}
 	}
