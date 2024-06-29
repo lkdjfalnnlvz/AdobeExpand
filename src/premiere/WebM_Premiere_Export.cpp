@@ -671,44 +671,86 @@ CopyBGRAToVPXImg(vpx_image_t *img, vpx_image_t *alpha_img, const char *frameBuff
 			prRb = prR;
 		}
 		
-		
-		// using the conversion found here: http://www.fourcc.org/fccyvrgb.php
-		// and 601 spec here: http://www.itu.int/dms_pubrec/itu-r/rec/bt/R-REC-BT.601-7-201103-I!!PDF-E.pdf
+		assert(img->range == VPX_CR_STUDIO_RANGE);
 		
 		// these are part of the RGBtoYUV math (uses Adobe 16-bit)
 		const int Yadd = (sizeof(BGRA_PIX) > 1 ? 20565000 : 165000);    // to be divided by 10000
 		const int UVadd = (sizeof(BGRA_PIX) > 1 ? 164495000 : 1285000); // includes extra 5000 for rounding
 		
-		for(int x=0; x < img->d_w; x++)
+		if(img->cs == VPX_CS_BT_709)
 		{
-			*imgY++ = DepthConvert<BGRA_PIX, IMG_PIX>( ((2568 * (int)*prR) + (5041 * (int)*prG) + ( 979 * (int)*prB) + Yadd) / 10000, img->bit_depth);
+			// https://en.wikipedia.org/wiki/YCbCr#ITU-R_BT.709_conversion
 			
-			if(sub_y > 1)
+			for(int x=0; x < img->d_w; x++)
 			{
-				if( (y % sub_y == 0) && (x % sub_x == 0) )
+				*imgY++ = DepthConvert<BGRA_PIX, IMG_PIX>( ((1826 * (int)*prR) + (6142 * (int)*prG) + ( 620 * (int)*prB) + Yadd) / 10000, img->bit_depth);
+				
+				if(sub_y > 1)
 				{
-					*imgV++ = DepthConvert<BGRA_PIX, IMG_PIX>( (((4392 * (int)*prR) - (3678 * (int)*prG) - ( 714 * (int)*prB) + UVadd) +
-										((4392 * (int)*prRb) - (3678 * (int)*prGb) - ( 714 * (int)*prBb) + UVadd)) / 20000, img->bit_depth);
-					*imgU++ = DepthConvert<BGRA_PIX, IMG_PIX>( ((-(1482 * (int)*prR) - (2910 * (int)*prG) + (4392 * (int)*prB) + UVadd) +
-										(-(1482 * (int)*prRb) - (2910 * (int)*prGb) + (4392 * (int)*prBb) + UVadd)) / 20000, img->bit_depth);
+					if( (y % sub_y == 0) && (x % sub_x == 0) )
+					{
+						*imgU++ = DepthConvert<BGRA_PIX, IMG_PIX>( ((-(1007 * (int)*prR) - (3385 * (int)*prG) + (4392 * (int)*prB) + UVadd) +
+											(-(1007 * (int)*prRb) - (3385 * (int)*prGb) + (4392 * (int)*prBb) + UVadd)) / 20000, img->bit_depth);
+						*imgV++ = DepthConvert<BGRA_PIX, IMG_PIX>( (((4392 * (int)*prR) - (3990 * (int)*prG) - ( 402 * (int)*prB) + UVadd) +
+											((4392 * (int)*prRb) - (3990 * (int)*prGb) - ( 402 * (int)*prBb) + UVadd)) / 20000, img->bit_depth);
+					}
+					
+					prRb += 4;
+					prGb += 4;
+					prBb += 4;
+				}
+				else
+				{
+					if(x % sub_x == 0)
+					{
+						*imgU++ = DepthConvert<BGRA_PIX, IMG_PIX>( ((-(1007 * (int)*prR) - (3385 * (int)*prG) + (4392 * (int)*prB) + UVadd) ) / 10000, img->bit_depth);
+						*imgV++ = DepthConvert<BGRA_PIX, IMG_PIX>( (((4392 * (int)*prR) - (3990 * (int)*prG) - ( 402 * (int)*prB) + UVadd)) / 10000, img->bit_depth);
+					}
 				}
 				
-				prRb += 4;
-				prGb += 4;
-				prBb += 4;
+				prR += 4;
+				prG += 4;
+				prB += 4;
 			}
-			else
-			{
-				if(x % sub_x == 0)
-				{
-					*imgV++ = DepthConvert<BGRA_PIX, IMG_PIX>( (((4392 * (int)*prR) - (3678 * (int)*prG) - ( 714 * (int)*prB) + UVadd)) / 10000, img->bit_depth);
-					*imgU++ = DepthConvert<BGRA_PIX, IMG_PIX>( ((-(1482 * (int)*prR) - (2910 * (int)*prG) + (4392 * (int)*prB) + UVadd) ) / 10000, img->bit_depth);
-				}
-			}
+		}
+		else
+		{
+			assert(img->cs == VPX_CS_BT_601);
+		
+			// using the conversion found here: http://www.fourcc.org/fccyvrgb.php
+			// and 601 spec here: http://www.itu.int/dms_pubrec/itu-r/rec/bt/R-REC-BT.601-7-201103-I!!PDF-E.pdf
 			
-			prR += 4;
-			prG += 4;
-			prB += 4;
+			for(int x=0; x < img->d_w; x++)
+			{
+				*imgY++ = DepthConvert<BGRA_PIX, IMG_PIX>( ((2568 * (int)*prR) + (5041 * (int)*prG) + ( 979 * (int)*prB) + Yadd) / 10000, img->bit_depth);
+				
+				if(sub_y > 1)
+				{
+					if( (y % sub_y == 0) && (x % sub_x == 0) )
+					{
+						*imgU++ = DepthConvert<BGRA_PIX, IMG_PIX>( ((-(1482 * (int)*prR) - (2910 * (int)*prG) + (4392 * (int)*prB) + UVadd) +
+											(-(1482 * (int)*prRb) - (2910 * (int)*prGb) + (4392 * (int)*prBb) + UVadd)) / 20000, img->bit_depth);
+						*imgV++ = DepthConvert<BGRA_PIX, IMG_PIX>( (((4392 * (int)*prR) - (3678 * (int)*prG) - ( 714 * (int)*prB) + UVadd) +
+											((4392 * (int)*prRb) - (3678 * (int)*prGb) - ( 714 * (int)*prBb) + UVadd)) / 20000, img->bit_depth);
+					}
+					
+					prRb += 4;
+					prGb += 4;
+					prBb += 4;
+				}
+				else
+				{
+					if(x % sub_x == 0)
+					{
+						*imgU++ = DepthConvert<BGRA_PIX, IMG_PIX>( ((-(1482 * (int)*prR) - (2910 * (int)*prG) + (4392 * (int)*prB) + UVadd) ) / 10000, img->bit_depth);
+						*imgV++ = DepthConvert<BGRA_PIX, IMG_PIX>( (((4392 * (int)*prR) - (3678 * (int)*prG) - ( 714 * (int)*prB) + UVadd)) / 10000, img->bit_depth);
+					}
+				}
+				
+				prR += 4;
+				prG += 4;
+				prB += 4;
+			}
 		}
 	}
 	
@@ -717,6 +759,7 @@ CopyBGRAToVPXImg(vpx_image_t *img, vpx_image_t *alpha_img, const char *frameBuff
 	{
 		assert(sub_x == alpha_img->x_chroma_shift + 1);
 		assert(sub_y == alpha_img->y_chroma_shift + 1);
+		assert(alpha_img->range = VPX_CR_FULL_RANGE);
 		
 		for(int y = 0; y < img->d_h; y++)
 		{
@@ -763,8 +806,11 @@ CopyPixToVPXImg(vpx_image_t *img, vpx_image_t *alpha_img, const PPixHand &outFra
 
 	const unsigned int sub_x = img->x_chroma_shift + 1;
 	const unsigned int sub_y = img->y_chroma_shift + 1;
+	
+	assert(img->range == VPX_CR_STUDIO_RANGE);
 
-	if(pixFormat == PrPixelFormat_YUV_420_MPEG2_FRAME_PICTURE_PLANAR_8u_601)
+	if(pixFormat == PrPixelFormat_YUV_420_MPEG2_FRAME_PICTURE_PLANAR_8u_601 ||
+		pixFormat == PrPixelFormat_YUV_420_MPEG2_FRAME_PICTURE_PLANAR_8u_709)
 	{
 		assert(sub_x == 2 && sub_y == 2);
 		assert(img->bit_depth == 8);
@@ -811,7 +857,8 @@ CopyPixToVPXImg(vpx_image_t *img, vpx_image_t *alpha_img, const PPixHand &outFra
 		pixSuite->GetRowBytes(outFrame, &rowbytes);
 		
 		
-		if(pixFormat == PrPixelFormat_UYVY_422_8u_601)
+		if(pixFormat == PrPixelFormat_UYVY_422_8u_601 ||
+			pixFormat == PrPixelFormat_UYVY_422_8u_709)
 		{
 			assert(sub_x == 2 && sub_y == 1);
 			assert(img->bit_depth == 8);
@@ -836,7 +883,8 @@ CopyPixToVPXImg(vpx_image_t *img, vpx_image_t *alpha_img, const PPixHand &outFra
 				}
 			}
 		}
-		else if(pixFormat == PrPixelFormat_VUYX_4444_8u)
+		else if(pixFormat == PrPixelFormat_VUYX_4444_8u ||
+				pixFormat == PrPixelFormat_VUYX_4444_8u_709)
 		{
 			assert(sub_x == 1 && sub_y == 1);
 			assert(img->bit_depth == 8);
@@ -847,6 +895,7 @@ CopyPixToVPXImg(vpx_image_t *img, vpx_image_t *alpha_img, const PPixHand &outFra
 		else if(pixFormat == PrPixelFormat_VUYA_4444_16u)
 		{
 			assert(img->bit_depth > 8);
+			assert(img->cs == VPX_CS_BT_601);
 			
 			CopyVUYAToVPXImg<unsigned short, unsigned short>(img, alpha_img, frameBufferP, rowbytes);
 		}
@@ -929,14 +978,22 @@ svt_to_vpx_img(vpx_image_t *vpx_img, EbSvtIOFormat *svt_img)
 }
 
 static void
-CopyPixToSVTImage(EbSvtIOFormat *svt_img, EbSvtIOFormat *svt_alpha_img, const PPixHand &outFrame, PrSDKPPixSuite *pixSuite, PrSDKPPix2Suite *pix2Suite)
+CopyPixToSVTImage(EbSvtIOFormat *svt_img, EbSvtIOFormat *svt_alpha_img, WebM_ColorSpace colorSpace, const PPixHand &outFrame, PrSDKPPixSuite *pixSuite, PrSDKPPix2Suite *pix2Suite)
 {
 	vpx_image_t vpx_img, vpx_alpha_img;
 	
 	svt_to_vpx_img(&vpx_img, svt_img);
 	
+	vpx_img.cs = (colorSpace == WEBM_REC709 ? VPX_CS_BT_709 : VPX_CS_BT_601);
+	vpx_img.range = VPX_CR_STUDIO_RANGE;
+	
 	if(svt_alpha_img != NULL)
+	{
 		svt_to_vpx_img(&vpx_alpha_img, svt_alpha_img);
+		
+		vpx_alpha_img.cs = VPX_CS_UNKNOWN;
+		vpx_img.range = VPX_CR_FULL_RANGE;
+	}
 	
 	CopyPixToVPXImg(&vpx_img, (svt_alpha_img == NULL ? NULL : &vpx_alpha_img), outFrame, pixSuite, pix2Suite);
 }
@@ -1081,7 +1138,7 @@ CopyToYUV420_10BIT(vpx_image_t &vpx_img, void *bufferDataPtr, uint32_t pitch)
 static void
 CopyPixToNVENCBuf(void *bufferDataPtr, uint32_t pitch, NV_ENC_BUFFER_FORMAT format,
 					void *alphaBufferDataPtr, uint32_t alphaPitch, NV_ENC_BUFFER_FORMAT alphaFormat,
-					uint32_t width, uint32_t height,
+					uint32_t width, uint32_t height, WebM_Colorspace colorspace,
 					const PPixHand &outFrame, PrSDKPPixSuite *pixSuite, PrSDKPPix2Suite *pix2Suite)
 {
 	vpx_image_t vpx_img, alpha_vpx_img;
@@ -1421,13 +1478,14 @@ exSDKExport(
 								audioFormat == kPrAudioChannelType_Mono ? 1 :
 								2);
 	
-	exParamValues videoCodecP, av1codecP, methodP, videoQualityP, bitrateP, twoPassP, keyframeMaxDistanceP, samplingP, bitDepthP, alphaP, customArgsP;
+	exParamValues videoCodecP, av1codecP, methodP, videoQualityP, bitrateP, colorSpaceP, twoPassP, keyframeMaxDistanceP, samplingP, bitDepthP, alphaP, customArgsP;
 		
 	paramSuite->GetParamValue(exID, gIdx, WebMVideoCodec, &videoCodecP);
 	paramSuite->GetParamValue(exID, gIdx, WebMAV1Codec, &av1codecP);
 	paramSuite->GetParamValue(exID, gIdx, WebMVideoMethod, &methodP);
 	paramSuite->GetParamValue(exID, gIdx, WebMVideoQuality, &videoQualityP);
 	paramSuite->GetParamValue(exID, gIdx, WebMVideoBitrate, &bitrateP);
+	paramSuite->GetParamValue(exID, gIdx, WebMColorSpace, &colorSpaceP);
 	paramSuite->GetParamValue(exID, gIdx, WebMVideoTwoPass, &twoPassP);
 	paramSuite->GetParamValue(exID, gIdx, WebMVideoKeyframeMaxDistance, &keyframeMaxDistanceP);
 	paramSuite->GetParamValue(exID, gIdx, WebMVideoSampling, &samplingP);
@@ -1455,6 +1513,7 @@ exSDKExport(
 	const int bit_depth = (use_vp8 ? 8 :
 							(nvenc_codec && bitDepthP.value.intValue == 12) ? 10 :
 							bitDepthP.value.intValue);
+	const WebM_ColorSpace colorSpace = (WebM_ColorSpace)colorSpaceP.value.intValue;
 	const bool use_alpha = alphaP.value.intValue;
 
 	char customArgs[256];
@@ -1476,9 +1535,9 @@ exSDKExport(
 	
 	
 	const PrPixelFormat yuv_format8 = (use_alpha ? PrPixelFormat_BGRA_4444_16u :
-										chroma == WEBM_444 ? PrPixelFormat_VUYX_4444_8u :
-										chroma == WEBM_422 ? PrPixelFormat_UYVY_422_8u_601 :
-										PrPixelFormat_YUV_420_MPEG2_FRAME_PICTURE_PLANAR_8u_601);
+										chroma == WEBM_444 ? (colorSpace == WEBM_REC709 ? PrPixelFormat_VUYX_4444_8u_709 : PrPixelFormat_VUYX_4444_8u) :
+										chroma == WEBM_422 ? (colorSpace == WEBM_REC709 ? PrPixelFormat_UYVY_422_8u_709 : PrPixelFormat_UYVY_422_8u_601) :
+										(colorSpace == WEBM_REC709 ? PrPixelFormat_YUV_420_MPEG2_FRAME_PICTURE_PLANAR_8u_709 : PrPixelFormat_YUV_420_MPEG2_FRAME_PICTURE_PLANAR_8u_601));
 
 	const PrPixelFormat yuv_format16 = PrPixelFormat_BGRA_4444_16u; // can't trust PrPixelFormat_VUYA_4444_16u, only 16-bit YUV format
 	
@@ -3010,17 +3069,13 @@ exSDKExport(
 					
 					color.set_bits_per_channel(bit_depth);
 					
-					const uint64_t horizontal_subsampling = (chroma == WEBM_444 ? 0 : 1);
-					const uint64_t vertical_subsampling = (chroma == WEBM_420 ? 1 : 0);
+					color.set_chroma_subsampling_horz(chroma == WEBM_444 ? 0 : 1);
+					color.set_chroma_subsampling_vert(chroma == WEBM_420 ? 1 : 0);
 					
-					color.set_chroma_subsampling_horz(horizontal_subsampling);
-					color.set_chroma_subsampling_vert(vertical_subsampling);
-					
-					// don't want to presume
-					//color.set_matrix_coefficients(mkvmuxer::Colour::kBt709);
-					//color.set_range(mkvmuxer::Colour::kBroadcastRange);
-					//color.set_transfer_characteristics(mkvmuxer::Colour::kIturBt709Tc);
-					//color.set_primaries(mkvmuxer::Colour::kIturBt709P);
+					color.set_matrix_coefficients(colorSpace == WEBM_REC709 ? mkvmuxer::Colour::kBt709 : mkvmuxer::Colour::kBt470bg); // BT.470 is Rec.601?
+					color.set_range(mkvmuxer::Colour::kBroadcastRange);
+					color.set_transfer_characteristics(mkvmuxer::Colour::kIturBt709Tc); // Rec.709 and 601 have the same curve
+					color.set_primaries(mkvmuxer::Colour::kIturBt709P); // and the same primaries
 					
 					video->SetColour(color);
 				}
@@ -4170,18 +4225,30 @@ exSDKExport(
 										
 										if(img && (!use_alpha || alpha_img))
 										{
+											img->cs = (colorSpace == WEBM_REC709 ? VPX_CS_BT_709 : VPX_CS_BT_601);
+											img->range = VPX_CR_STUDIO_RANGE;
+
+											if(use_alpha)
+											{
+												alpha_img->cs = VPX_CS_UNKNOWN;
+												alpha_img->range = VPX_CR_FULL_RANGE;
+											}
+											
 											if(bit_depth > 8)
 											{
 												img->bit_depth = bit_depth;
 												img->bps = img->bps * bit_depth / 16;
-												
+
 												if(use_alpha)
 												{
 													alpha_img->bit_depth = bit_depth;
 													alpha_img->bps = alpha_img->bps * bit_depth / 16;
 												}
 											}
-										
+											else
+												assert(img->bit_depth == 8);
+											
+											
 											CopyPixToVPXImg(img, alpha_img, renderResult.outFrame, pixSuite, pix2Suite);
 											
 											
@@ -4223,12 +4290,12 @@ exSDKExport(
 										if(av1_codec == AV1_CODEC_AOM)
 										{
 											const aom_img_fmt_t imgfmt8 = chroma == WEBM_444 ? AOM_IMG_FMT_I444 :
-												chroma == WEBM_422 ? AOM_IMG_FMT_I422 :
-												AOM_IMG_FMT_I420;
+																			chroma == WEBM_422 ? AOM_IMG_FMT_I422 :
+																			AOM_IMG_FMT_I420;
 
 											const aom_img_fmt_t imgfmt16 = chroma == WEBM_444 ? AOM_IMG_FMT_I44416 :
-												chroma == WEBM_422 ? AOM_IMG_FMT_I42216 :
-												AOM_IMG_FMT_I42016;
+																			chroma == WEBM_422 ? AOM_IMG_FMT_I42216 :
+																			AOM_IMG_FMT_I42016;
 
 											const aom_img_fmt_t imgfmt = (bit_depth > 8 ? imgfmt16 : imgfmt8);
 
@@ -4245,6 +4312,23 @@ exSDKExport(
 
 											if(img && (!use_alpha || alpha_img))
 											{
+												img->cp = (colorSpace == WEBM_REC709 ? AOM_CICP_CP_BT_709 : AOM_CICP_CP_BT_601);
+												img->tc = (colorSpace == WEBM_REC709 ? AOM_CICP_TC_BT_709 : AOM_CICP_TC_BT_601);
+												img->mc = (colorSpace == WEBM_REC709 ? AOM_CICP_MC_BT_709 : AOM_CICP_MC_BT_601);
+												img->monochrome = FALSE;
+												img->csp = AOM_CSP_UNKNOWN;
+												img->range = AOM_CR_STUDIO_RANGE;
+												
+												if(use_alpha)
+												{
+													alpha_img->cp = AOM_CICP_CP_UNSPECIFIED;
+													alpha_img->tc = AOM_CICP_TC_UNSPECIFIED;
+													alpha_img->mc = AOM_CICP_MC_UNSPECIFIED;
+													alpha_img->monochrome = FALSE; // I know...
+													alpha_img->csp = AOM_CSP_UNKNOWN;
+													alpha_img->range = AOM_CR_FULL_RANGE;
+												}
+												
 												if(bit_depth > 8)
 												{
 													img->bit_depth = bit_depth;
@@ -4293,7 +4377,7 @@ exSDKExport(
 										}
 										else if(av1_codec == AV1_CODEC_SVT_AV1)
 										{
-											CopyPixToSVTImage(&svt_image, (use_alpha ? &svt_alpha_image : NULL), renderResult.outFrame, pixSuite, pix2Suite);
+											CopyPixToSVTImage(&svt_image, (use_alpha ? &svt_alpha_image : NULL), colorSpace, renderResult.outFrame, pixSuite, pix2Suite);
 											
 											svt_header.n_tick_count = svt_header.dts = svt_header.pts = encoder_FrameNumber;
 											svt_header.flags = 0;

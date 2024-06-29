@@ -201,6 +201,7 @@ typedef struct
 	vpx_img_fmt_t			img_fmt;
 	vpx_color_space_t		color_space;
 	vpx_color_range_t		color_range;
+	bool					rec709matrix;
 	int						audio_track;
 	AudioCodec				audio_codec;
 	long long				audio_start_tstamp;
@@ -424,6 +425,7 @@ SDKOpenFile8(
 		localRecP->video_track = -1;
 		localRecP->video_codec = CODEC_NONE;
 		localRecP->video_start_tstamp = -1;
+		localRecP->rec709matrix = false;
 		localRecP->audio_track = -1;
 		localRecP->audio_codec = CODEC_ANONE;
 		localRecP->audio_start_tstamp = -1;
@@ -1163,16 +1165,16 @@ SDKCloseFile(
 
 
 static inline PrPixelFormat
-vpx_to_premiere_pix_format(const vpx_img_fmt &fmt)
+vpx_to_premiere_pix_format(const vpx_img_fmt &fmt, bool rec709)
 {
-	return fmt == VPX_IMG_FMT_I422 ? PrPixelFormat_UYVY_422_8u_601 :
-			fmt == VPX_IMG_FMT_I440 ? PrPixelFormat_VUYX_4444_8u :
-			fmt == VPX_IMG_FMT_I444 ? PrPixelFormat_VUYX_4444_8u :
+	return fmt == VPX_IMG_FMT_I422 ? (rec709 ? PrPixelFormat_UYVY_422_8u_709 : PrPixelFormat_UYVY_422_8u_601) :
+			fmt == VPX_IMG_FMT_I440 ? (rec709 ? PrPixelFormat_VUYX_4444_8u_709 : PrPixelFormat_VUYX_4444_8u) :
+			fmt == VPX_IMG_FMT_I444 ? (rec709 ? PrPixelFormat_VUYX_4444_8u_709 : PrPixelFormat_VUYX_4444_8u) :
 			fmt == VPX_IMG_FMT_I42016 ? PrPixelFormat_BGRA_4444_16u : // These are set to RGB
 			fmt == VPX_IMG_FMT_I42216 ? PrPixelFormat_BGRA_4444_16u : // because Premiere seems
 			fmt == VPX_IMG_FMT_I44016 ? PrPixelFormat_BGRA_4444_16u : // to have a bug with
 			fmt == VPX_IMG_FMT_I44416 ? PrPixelFormat_BGRA_4444_16u : // VUYA_4444_16u
-			PrPixelFormat_YUV_420_MPEG2_FRAME_PICTURE_PLANAR_8u_601;
+			(rec709 ? PrPixelFormat_YUV_420_MPEG2_FRAME_PICTURE_PLANAR_8u_709 : PrPixelFormat_YUV_420_MPEG2_FRAME_PICTURE_PLANAR_8u_601);
 }
 
 static prMALError 
@@ -1189,17 +1191,17 @@ SDKGetIndPixelFormat(
 
 	if(idx == 0)
 	{
-		SDKIndPixelFormatRec->outPixelFormat = vpx_to_premiere_pix_format(localRecP->img_fmt);
+		SDKIndPixelFormatRec->outPixelFormat = vpx_to_premiere_pix_format(localRecP->img_fmt, localRecP->rec709matrix);
 	}
 	else if(idx == 1 && localRecP->bit_depth > 8)
 	{
 		// if main format is 16-bit, offer 8-bit alternative
 		assert(localRecP->img_fmt & VPX_IMG_FMT_HIGHBITDEPTH);
 	
-		const PrPixelFormat pix_format8 = localRecP->img_fmt == VPX_IMG_FMT_I42216 ? PrPixelFormat_UYVY_422_8u_601 :
-											localRecP->img_fmt == VPX_IMG_FMT_I44016 ? PrPixelFormat_VUYX_4444_8u :
-											localRecP->img_fmt == VPX_IMG_FMT_I44416 ? PrPixelFormat_VUYX_4444_8u :
-											PrPixelFormat_YUV_420_MPEG2_FRAME_PICTURE_PLANAR_8u_601;
+		const PrPixelFormat pix_format8 = localRecP->img_fmt == VPX_IMG_FMT_I42216 ? (localRecP->rec709matrix ? PrPixelFormat_UYVY_422_8u_709 : PrPixelFormat_UYVY_422_8u_601) :
+											localRecP->img_fmt == VPX_IMG_FMT_I44016 ? (localRecP->rec709matrix ? PrPixelFormat_VUYX_4444_8u_709 : PrPixelFormat_VUYX_4444_8u) :
+											localRecP->img_fmt == VPX_IMG_FMT_I44416 ? (localRecP->rec709matrix ? PrPixelFormat_VUYX_4444_8u_709 : PrPixelFormat_VUYX_4444_8u) :
+											(localRecP->rec709matrix ? PrPixelFormat_YUV_420_MPEG2_FRAME_PICTURE_PLANAR_8u_709 : PrPixelFormat_YUV_420_MPEG2_FRAME_PICTURE_PLANAR_8u_601);
 											
 		SDKIndPixelFormatRec->outPixelFormat = pix_format8;
 	}
@@ -1290,6 +1292,9 @@ SDKAnalysis(
 		{
 			stream << " (full range)";
 		}
+		
+		if(localRecP->rec709matrix)
+			stream << " (Rec. 709 matrix)";
 		
 		if(localRecP->audio_track >= 0)
 			stream << ", ";
@@ -1560,6 +1565,18 @@ SDKGetInfo8(
 																	assert(horizontal_subsampling == color->chroma_subsampling_horz);
 																	assert(vertical_subsampling == color->chroma_subsampling_vert);
 																	
+																	const long long xfer = color->transfer_characteristics;
+																	
+																	localRecP->color_space = (xfer == 1 ? (color->matrix_coefficients == 1 ? VPX_CS_BT_709 : VPX_CS_BT_601) : // kIturBt709Tc (kBt709, kBt470bg)
+																								xfer == 6 ? VPX_CS_SMPTE_170 : // kSmpte170MTc
+																								xfer == 7 ? VPX_CS_SMPTE_240 : // kSmpte240MTc
+																								xfer == 13 ? VPX_CS_SRGB : // kIec6196621
+																								(xfer == 14 || xfer == 15) ? VPX_CS_BT_2020 : // kIturBt202010bit, kIturBt202012bit
+																								VPX_CS_UNKNOWN);
+																	
+																	if(color->matrix_coefficients == 1) // kBt709
+																		localRecP->rec709matrix = true;
+																	
 																	if(color->mastering_metadata != NULL)
 																	{
 																		// chromaticities
@@ -1604,12 +1621,30 @@ SDKGetInfo8(
 																						VPX_IMG_FMT_NONE);
 
 																localRecP->color_space = (img->cp == AOM_CICP_CP_BT_601 ? VPX_CS_BT_601 :
+																							img->cp == AOM_CICP_CP_BT_709 ? VPX_CS_BT_709 :
 																							img->cp == AOM_CICP_CP_SMPTE_240 ? VPX_CS_SMPTE_240 :
 																							img->cp == AOM_CICP_CP_BT_2020 ? VPX_CS_BT_2020 :
 																							img->tc == AOM_CICP_TC_SRGB ? VPX_CS_SRGB :
-																							VPX_CS_BT_709);
+																							VPX_CS_UNKNOWN);
 
 																localRecP->color_range = (img->range == AOM_CR_FULL_RANGE ? VPX_CR_FULL_RANGE : VPX_CR_STUDIO_RANGE);
+																
+																const mkvparser::Colour * const color = pVideoTrack->GetColour();
+																
+																if(color != NULL)
+																{
+																	const long long xfer = color->transfer_characteristics;
+																																	
+																	localRecP->color_space = (xfer == 1 ? (color->matrix_coefficients == 1 ? VPX_CS_BT_709 : VPX_CS_BT_601) : // kIturBt709Tc (kBt709, kBt470bg)
+																								xfer == 6 ? VPX_CS_SMPTE_170 : // kSmpte170MTc
+																								xfer == 7 ? VPX_CS_SMPTE_240 : // kSmpte240MTc
+																								xfer == 13 ? VPX_CS_SRGB : // kIec6196621
+																								(xfer == 14 || xfer == 15) ? VPX_CS_BT_2020 : // kIturBt202010bit, kIturBt202012bit
+																								VPX_CS_UNKNOWN);
+																								
+																	if(color->matrix_coefficients == 1) // kBt709
+																		localRecP->rec709matrix = true;
+																}
 
 																aom_img_free(img);
 															}
@@ -1683,7 +1718,7 @@ SDKGetInfo8(
 						
 						// Video information
 						SDKFileInfo8->hasVideo				= kPrTrue;
-						SDKFileInfo8->vidInfo.subType		= vpx_to_premiere_pix_format(localRecP->img_fmt);
+						SDKFileInfo8->vidInfo.subType		= vpx_to_premiere_pix_format(localRecP->img_fmt, localRecP->rec709matrix);
 						SDKFileInfo8->vidInfo.imageWidth	= pVideoTrack->GetWidth();
 						SDKFileInfo8->vidInfo.imageHeight	= pVideoTrack->GetHeight();
 						SDKFileInfo8->vidInfo.depth			= localRecP->bit_depth * 3;	// for RGB, no A
@@ -1973,7 +2008,8 @@ CopyImgToPix(const vpx_image_t * const img, PPixHand &ppix, PrSDKPPixSuite *PPix
 	const unsigned int sub_x = img->x_chroma_shift + 1;
 	const unsigned int sub_y = img->y_chroma_shift + 1;
 	
-	if(pix_format == PrPixelFormat_YUV_420_MPEG2_FRAME_PICTURE_PLANAR_8u_601)
+	if(pix_format == PrPixelFormat_YUV_420_MPEG2_FRAME_PICTURE_PLANAR_8u_601 ||
+		pix_format == PrPixelFormat_YUV_420_MPEG2_FRAME_PICTURE_PLANAR_8u_709)
 	{
 		assert(sub_x == 2 && sub_y == 2);
 
@@ -2055,7 +2091,8 @@ CopyImgToPix(const vpx_image_t * const img, PPixHand &ppix, PrSDKPPixSuite *PPix
 		PPixSuite->GetRowBytes(ppix, &rowbytes);
 		
 								
-		if(pix_format == PrPixelFormat_UYVY_422_8u_601)
+		if(pix_format == PrPixelFormat_UYVY_422_8u_601 ||
+			pix_format == PrPixelFormat_UYVY_422_8u_709)
 		{
 			assert(sub_x == 2 && sub_y == 1);
 			
@@ -2102,7 +2139,8 @@ CopyImgToPix(const vpx_image_t * const img, PPixHand &ppix, PrSDKPPixSuite *PPix
 				}
 			}
 		}
-		else if(pix_format == PrPixelFormat_VUYX_4444_8u)
+		else if(pix_format == PrPixelFormat_VUYX_4444_8u ||
+				pix_format == PrPixelFormat_VUYX_4444_8u_709)
 		{
 			assert(sub_x == 1 && sub_y == 1);
 			
@@ -2120,6 +2158,7 @@ CopyImgToPix(const vpx_image_t * const img, PPixHand &ppix, PrSDKPPixSuite *PPix
 		else if(pix_format == PrPixelFormat_VUYA_4444_16u)
 		{
 			assert(img->bit_depth > 8);
+			assert(img->cs != VPX_CS_BT_709);
 			
 			CopyImgToVUYA<unsigned short, unsigned short>(img, frameBufferP, rowbytes);
 		}
@@ -2128,6 +2167,9 @@ CopyImgToPix(const vpx_image_t * const img, PPixHand &ppix, PrSDKPPixSuite *PPix
 			// This is only necessary because of a bug with VUYA_4444_16u
 			assert(img->bit_depth > 8);
 		
+			const int subY = ConvertDepth<unsigned short, unsigned short>(16, 8);
+			const int subUV = ConvertDepth<unsigned short, unsigned short>(128, 8);
+			
 			for(int y = 0; y < img->d_h; y++)
 			{
 				const unsigned short *imgY = (unsigned short *)(img->planes[VPX_PLANE_Y] + (img->stride[VPX_PLANE_Y] * y));
@@ -2154,12 +2196,21 @@ CopyImgToPix(const vpx_image_t * const img, PPixHand &ppix, PrSDKPPixSuite *PPix
 					const int prU = ConvertDepth<unsigned short, unsigned short>(*imgU, img->bit_depth);
 					const int prV = ConvertDepth<unsigned short, unsigned short>(*imgV, img->bit_depth);
 					
-					const int subY = ConvertDepth<unsigned short, unsigned short>(16, 8);
-					const int subUV = ConvertDepth<unsigned short, unsigned short>(128, 8);
+					if(img->cs == VPX_CS_BT_709)
+					{
+						*prB = Clamp16( ((11644 * (prY - subY)) + (21124 * (prU - subUV)) + 5000) / 10000 );
+						*prG = Clamp16( ((11644 * (prY - subY)) - (2132 * (prV - subUV)) - (5329 * (prU - subUV)) + 5000) / 10000 );
+						*prR = Clamp16( ((11644 * (prY - subY)) + (17927 * (prV - subUV)) + 5000) / 10000 );
+					}
+					else
+					{
+						assert(img->cs == VPX_CS_BT_601);
 					
-					*prB = Clamp16( ((11644 * (prY - subY)) + (20172 * (prU - subUV)) + 5000) / 10000 );
-					*prG = Clamp16( ((11644 * (prY - subY)) - (8130 * (prV - subUV)) - (3918 * (prU - subUV)) + 5000) / 10000 );
-					*prR = Clamp16( ((11644 * (prY - subY)) + (15960 * (prV - subUV)) + 5000) / 10000 );
+						*prB = Clamp16( ((11644 * (prY - subY)) + (20172 * (prU - subUV)) + 5000) / 10000 );
+						*prG = Clamp16( ((11644 * (prY - subY)) - (8130 * (prV - subUV)) - (3918 * (prU - subUV)) + 5000) / 10000 );
+						*prR = Clamp16( ((11644 * (prY - subY)) + (15960 * (prV - subUV)) + 5000) / 10000 );
+					}
+					
 					*prA = PF_MAX_CHAN16;
 					
 					prB += 4;
@@ -2226,7 +2277,7 @@ store_vpx_img(
 
 	
 	// apparently pix_format doesn't have to match frameFormat->inPixelFormat
-	const PrPixelFormat pix_format = vpx_to_premiere_pix_format(img_fmt);
+	const PrPixelFormat pix_format = vpx_to_premiere_pix_format(img_fmt, img->cs == VPX_CS_BT_709);
 										
 	PPixHand ppix;
 	
@@ -2286,6 +2337,7 @@ aom_to_vpx_img(vpx_image_t *vpx_img, const aom_image_t *aom_img)
 					VPX_IMG_FMT_NONE);
 					
 	vpx_img->cs = (aom_img->cp == AOM_CICP_CP_BT_601 ? VPX_CS_BT_601 :
+					aom_img->cp == AOM_CICP_CP_BT_709 ? VPX_CS_BT_709 :
 					aom_img->cp == AOM_CICP_CP_SMPTE_240 ? VPX_CS_SMPTE_240 :
 					aom_img->cp == AOM_CICP_CP_BT_2020 ? VPX_CS_BT_2020 :
 					aom_img->tc == AOM_CICP_TC_SRGB ? VPX_CS_SRGB :
@@ -2324,6 +2376,8 @@ store_aom_img(
 	vpx_image_t vpx_img;
 	
 	aom_to_vpx_img(&vpx_img, img);
+	
+	vpx_img.cs = (img->mc == AOM_CICP_MC_BT_709 ? VPX_CS_BT_709 : VPX_CS_BT_601);
 	
 	return store_vpx_img(&vpx_img, localRecP, sourceVideoRec, decoded_tstamp);
 }
@@ -2506,6 +2560,8 @@ SDKGetSourceVideo(
 														
 														while(vpx_image_t *img = vpx_codec_get_frame(&localRecP->vpx_decoder, &iter))
 														{
+															img->cs = (localRecP->rec709matrix ? VPX_CS_BT_709 : VPX_CS_BT_601);
+														
 															const bool requested_frame = store_vpx_img(img,
 																										localRecP,
 																										sourceVideoRec,
@@ -2537,6 +2593,8 @@ SDKGetSourceVideo(
 														
 														while(aom_image_t *img = aom_codec_get_frame(&localRecP->aom_decoder, &iter))
 														{
+															img->mc = (localRecP->rec709matrix ? AOM_CICP_MC_BT_709 : AOM_CICP_MC_BT_601);
+														
 															const bool requested_frame = store_aom_img(img,
 																										localRecP,
 																										sourceVideoRec,

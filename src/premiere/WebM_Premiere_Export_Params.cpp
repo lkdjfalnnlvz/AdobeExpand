@@ -535,6 +535,25 @@ exSDKGenerateDefaultParams(
 	exportParamSuite->AddParam(exID, gIdx, ADBEVideoCodecGroup, &bitDepthParam);
 	
 	
+	// Color Space
+	exParamValues colorSpaceValues;
+	colorSpaceValues.structVersion = 1;
+	colorSpaceValues.rangeMin.intValue = WEBM_REC601;
+	colorSpaceValues.rangeMax.intValue = WEBM_REC709;
+	colorSpaceValues.value.intValue = WEBM_REC709;
+	colorSpaceValues.disabled = kPrFalse;
+	colorSpaceValues.hidden = kPrFalse;
+	
+	exNewParamInfo colorSpaceParam;
+	colorSpaceParam.structVersion = 1;
+	strncpy(colorSpaceParam.identifier, WebMColorSpace, 255);
+	colorSpaceParam.paramType = exParamType_int;
+	colorSpaceParam.flags = exParamFlag_none;
+	colorSpaceParam.paramValues = colorSpaceValues;
+	
+	exportParamSuite->AddParam(exID, gIdx, ADBEVideoCodecGroup, &colorSpaceParam);
+	
+	
 	// Alpha channel
 	exParamValues alphaValues;
 	alphaValues.structVersion = 1;
@@ -1078,7 +1097,7 @@ exSDKPostProcessParams(
 	
 
 	// Bit depth
-	utf16ncpy(paramString, "Bit depth", 255);
+	utf16ncpy(paramString, "Bit Depth", 255);
 	exportParamSuite->SetParamName(exID, gIdx, WebMVideoBitDepth, paramString);
 	
 	
@@ -1098,6 +1117,28 @@ exSDKPostProcessParams(
 		tempBitDepthMethod.intValue = vidBitDepth[i];
 		utf16ncpy(paramString, vidBitDepthStrings[i], 255);
 		exportParamSuite->AddConstrainedValuePair(exID, gIdx, WebMVideoBitDepth, &tempBitDepthMethod, paramString);
+	}
+	
+	
+	// Color Space
+	utf16ncpy(paramString, "Color Space", 255);
+	exportParamSuite->SetParamName(exID, gIdx, WebMColorSpace, paramString);
+	
+	
+	int vidColorSpace[] = {	WEBM_REC601,
+							WEBM_REC709 };
+	
+	const char *vidColorSpaceStrings[]	= {	"Rec. 601",
+											"Rec. 709" };
+
+	exportParamSuite->ClearConstrainedValues(exID, gIdx, WebMColorSpace);
+	
+	exOneParamValueRec tempColorSpace;
+	for(int i=0; i < 2; i++)
+	{
+		tempColorSpace.intValue = vidColorSpace[i];
+		utf16ncpy(paramString, vidColorSpaceStrings[i], 255);
+		exportParamSuite->AddConstrainedValuePair(exID, gIdx, WebMColorSpace, &tempColorSpace, paramString);
 	}
 	
 	
@@ -1491,7 +1532,7 @@ exSDKValidateParamChanged (
 		const bool nvenc_codec = (codecValue.value.intValue == WEBM_CODEC_AV1 && av1codecValue.value.intValue == AV1_CODEC_NVENC);
 
 		if(codecValue.value.intValue == WEBM_CODEC_VP8 || nvenc_codec)
-			samplingValue.value.intValue == WEBM_420;
+			samplingValue.value.intValue = WEBM_420;
 
 		if(codecValue.value.intValue == WEBM_CODEC_VP8)
 			bitDepthValue.value.intValue = VPX_BITS_8;

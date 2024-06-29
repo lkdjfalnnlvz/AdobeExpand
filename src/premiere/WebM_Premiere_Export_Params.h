@@ -78,6 +78,11 @@ typedef enum {
 	WEBM_444
 } WebM_Chroma_Sampling;
 
+typedef enum {
+	WEBM_REC601 = 0,
+	WEBM_REC709
+} WebM_ColorSpace;
+
 
 #define WebMPluginVersion				"WebMPluginVersion"
 
@@ -90,6 +95,7 @@ typedef enum {
 #define WebMVideoKeyframeMaxDistance	"WebMVideoKeyframeMaxDistance"
 #define WebMVideoSampling				"WebMVideoSampling"
 #define WebMVideoBitDepth				"WebMVideoBitDepth"
+#define WebMColorSpace					"WebMColorSpace"
 
 #define WebMCustomGroup					"WebMCustomGroup"
 #define WebMCustomArgs					"WebMCustomArgs"
