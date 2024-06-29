@@ -1535,56 +1535,6 @@ SDKGetInfo8(
 																localRecP->color_range = img->range;
 															
 																vpx_img_free(img);
-																
-																
-																// Color metadata!
-																// https://mailarchive.ietf.org/arch/search/?email_list=cellar&q=colour
-																
-																const mkvparser::Colour * const color = pVideoTrack->GetColour();
-																
-																if(color != NULL)
-																{
-																	assert(img->bit_depth == color->bits_per_channel);
-																	
-																	const int horizontal_subsampling = (img->fmt == VPX_IMG_FMT_I420 ?  1 :
-																										img->fmt == VPX_IMG_FMT_I422 ?  1 :
-																										img->fmt == VPX_IMG_FMT_I444 ?  0 :
-																										img->fmt == VPX_IMG_FMT_I42016 ?  1 :
-																										img->fmt == VPX_IMG_FMT_I42216 ?  1 :
-																										img->fmt == VPX_IMG_FMT_I44416 ?  0 :
-																										2);
-																										
-																	const int vertical_subsampling = (img->fmt == VPX_IMG_FMT_I420 ?  1 :
-																										img->fmt == VPX_IMG_FMT_I422 ?  0 :
-																										img->fmt == VPX_IMG_FMT_I444 ?  0 :
-																										img->fmt == VPX_IMG_FMT_I42016 ?  1 :
-																										img->fmt == VPX_IMG_FMT_I42216 ?  0 :
-																										img->fmt == VPX_IMG_FMT_I44416 ?  0 :
-																										2);
-																										
-																	assert(horizontal_subsampling == color->chroma_subsampling_horz);
-																	assert(vertical_subsampling == color->chroma_subsampling_vert);
-																	
-																	const long long xfer = color->transfer_characteristics;
-																	
-																	localRecP->color_space = (xfer == 1 ? (color->matrix_coefficients == 1 ? VPX_CS_BT_709 : VPX_CS_BT_601) : // kIturBt709Tc (kBt709, kBt470bg)
-																								xfer == 6 ? VPX_CS_SMPTE_170 : // kSmpte170MTc
-																								xfer == 7 ? VPX_CS_SMPTE_240 : // kSmpte240MTc
-																								xfer == 13 ? VPX_CS_SRGB : // kIec6196621
-																								(xfer == 14 || xfer == 15) ? VPX_CS_BT_2020 : // kIturBt202010bit, kIturBt202012bit
-																								VPX_CS_UNKNOWN);
-																	
-																	if(color->matrix_coefficients == 1) // kBt709
-																		localRecP->rec709matrix = true;
-																	
-																	if(color->mastering_metadata != NULL)
-																	{
-																		// chromaticities
-																		assert(color->mastering_metadata->r != NULL);
-																		assert(color->mastering_metadata->g != NULL);
-																		assert(color->mastering_metadata->b != NULL);
-																	}
-																}
 															}
 															else
 																assert(false);
@@ -1628,23 +1578,6 @@ SDKGetInfo8(
 																							VPX_CS_UNKNOWN);
 
 																localRecP->color_range = (img->range == AOM_CR_FULL_RANGE ? VPX_CR_FULL_RANGE : VPX_CR_STUDIO_RANGE);
-																
-																const mkvparser::Colour * const color = pVideoTrack->GetColour();
-																
-																if(color != NULL)
-																{
-																	const long long xfer = color->transfer_characteristics;
-																																	
-																	localRecP->color_space = (xfer == 1 ? (color->matrix_coefficients == 1 ? VPX_CS_BT_709 : VPX_CS_BT_601) : // kIturBt709Tc (kBt709, kBt470bg)
-																								xfer == 6 ? VPX_CS_SMPTE_170 : // kSmpte170MTc
-																								xfer == 7 ? VPX_CS_SMPTE_240 : // kSmpte240MTc
-																								xfer == 13 ? VPX_CS_SRGB : // kIec6196621
-																								(xfer == 14 || xfer == 15) ? VPX_CS_BT_2020 : // kIturBt202010bit, kIturBt202012bit
-																								VPX_CS_UNKNOWN);
-																								
-																	if(color->matrix_coefficients == 1) // kBt709
-																		localRecP->rec709matrix = true;
-																}
 
 																aom_img_free(img);
 															}
@@ -1688,6 +1621,55 @@ SDKGetInfo8(
 								}
 								else
 									duration = 1 * timeCodeScale;
+							}
+						}
+						
+						
+						// Color metadata
+						// https://mailarchive.ietf.org/arch/search/?email_list=cellar&q=colour
+						
+						const mkvparser::Colour * const color = pVideoTrack->GetColour();
+						
+						if(color != NULL)
+						{
+							assert(localRecP->bit_depth == color->bits_per_channel);
+							
+							const int horizontal_subsampling = (localRecP->img_fmt == VPX_IMG_FMT_I420 ?  1 :
+																localRecP->img_fmt == VPX_IMG_FMT_I422 ?  1 :
+																localRecP->img_fmt == VPX_IMG_FMT_I444 ?  0 :
+																localRecP->img_fmt == VPX_IMG_FMT_I42016 ?  1 :
+																localRecP->img_fmt == VPX_IMG_FMT_I42216 ?  1 :
+																localRecP->img_fmt == VPX_IMG_FMT_I44416 ?  0 :
+																2);
+																
+							const int vertical_subsampling = (localRecP->img_fmt == VPX_IMG_FMT_I420 ?  1 :
+																localRecP->img_fmt == VPX_IMG_FMT_I422 ?  0 :
+																localRecP->img_fmt == VPX_IMG_FMT_I444 ?  0 :
+																localRecP->img_fmt == VPX_IMG_FMT_I42016 ?  1 :
+																localRecP->img_fmt == VPX_IMG_FMT_I42216 ?  0 :
+																localRecP->img_fmt == VPX_IMG_FMT_I44416 ?  0 :
+																2);
+																
+							assert(horizontal_subsampling == color->chroma_subsampling_horz);
+							assert(vertical_subsampling == color->chroma_subsampling_vert);
+							
+							const long long xfer = color->transfer_characteristics;
+							
+							localRecP->color_space = (xfer == 1 ? (color->matrix_coefficients == 1 ? VPX_CS_BT_709 : VPX_CS_BT_601) : // kIturBt709Tc (kBt709, kBt470bg)
+														xfer == 6 ? VPX_CS_SMPTE_170 : // kSmpte170MTc
+														xfer == 7 ? VPX_CS_SMPTE_240 : // kSmpte240MTc
+														xfer == 13 ? VPX_CS_SRGB : // kIec6196621
+														(xfer == 14 || xfer == 15) ? VPX_CS_BT_2020 : // kIturBt202010bit, kIturBt202012bit
+														VPX_CS_UNKNOWN);
+							
+							localRecP->rec709matrix = (color->matrix_coefficients == 1); // kBt709
+							
+							if(color->mastering_metadata != NULL)
+							{
+								// chromaticities
+								assert(color->mastering_metadata->r != NULL);
+								assert(color->mastering_metadata->g != NULL);
+								assert(color->mastering_metadata->b != NULL);
 							}
 						}
 						
