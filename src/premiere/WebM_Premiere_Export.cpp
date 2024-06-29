@@ -1656,17 +1656,21 @@ exSDKExport(
 		// Checking NVENC stuff here because it doesn't actually appear to run through multiple passes
 		// and want to make sure I'm actually going to use it before I cancel them.
 
+		AV1_Codec fallback_codec = AV1_CODEC_AOM;
+
 		if(av1_auto)
 		{
 		#ifdef WEBM_HAVE_NVENC
 			if(nvenc.version != 0)
+			{
 				av1_codec = AV1_CODEC_NVENC;
+				
+				fallback_codec = AV1_CODEC_SVT_AV1;
+			}
 			else
 		#endif // WEBM_HAVE_NVENC
-				av1_codec = AV1_CODEC_AOM;
+				av1_codec = AV1_CODEC_SVT_AV1;
 		}
-
-		const AV1_Codec fallback_codec = AV1_CODEC_AOM;
 
 		if(av1_codec == AV1_CODEC_NVENC && (chroma != WEBM_420 || bit_depth > 10))
 		{
@@ -2185,6 +2189,8 @@ exSDKExport(
 		
 		if(av1_codec == AV1_CODEC_SVT_AV1)
 		{
+			fallback_codec = AV1_CODEC_AOM;
+		
 			bool svt_problem = false;
 		
 			if(chroma != WEBM_444 && (renderParms.inWidth % 2) != 0)
