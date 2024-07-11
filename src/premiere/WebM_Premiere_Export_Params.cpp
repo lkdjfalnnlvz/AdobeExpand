@@ -2574,7 +2574,7 @@ ConfigureAOMEncoderPost(aom_codec_ctx_t *encoder, const char *txt)
 		return false;
 }
 
-
+/*
 bool
 ConvigureSVTAV1Encoder(EbSvtAv1EncConfiguration &config, const char *txt)
 {
@@ -2614,7 +2614,7 @@ ConvigureSVTAV1Encoder(EbSvtAv1EncConfiguration &config, const char *txt)
 	else
 		return false;
 }
-
+*/
 
 #ifdef WEBM_HAVE_NVENC
 bool
