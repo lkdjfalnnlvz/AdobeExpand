@@ -42,43 +42,16 @@
 #include "WebM_Premiere_libvpx.h"
 #include "WebM_Premiere_aom.h"
 #include "WebM_Premiere_SVT-AV1.h"
+#ifdef WEBM_HAVE_NVENC
+#include "WebM_Premiere_NVENC.h"
+#endif
 
 #include "WebM_Premiere_Vorbis.h"
 #include "WebM_Premiere_Opus.h"
 
-#include "aom/aom_codec.h"
-#include "aom/aom_encoder.h"
-#include "aom/aomcx.h"
-
-#include "EbSvtAv1Enc.h"
-
-#ifdef WEBM_HAVE_NVENC
-#include <cuda.h>
-#include <cuda_runtime.h>
-CUdevice cudaDevice;
-
-#include <nvEncodeAPI.h>
-NV_ENCODE_API_FUNCTION_LIST nvenc = { 0 };
-#endif
 
 #include <assert.h>
 
-//extern int g_num_cpus;
-
-
-
-/*static int
-mylog2(int val)
-{
-	int ret = 0;
-	
-	while( pow(2.0, ret) < val )
-	{
-		ret++;
-	}
-	
-	return ret;
-}*/
 
 
 VideoEncoder::VideoEncoder(PrSDKPPixSuite *pixSuite, PrSDKPPix2Suite *pix2Suite, bool alpha) :
@@ -590,40 +563,23 @@ void
 VideoEncoder::initialize()
 {
 #ifdef WEBM_HAVE_NVENC
-	int driverVersion = 0;
-	cudaError_t cudaErr = cudaDriverGetVersion(&driverVersion);
-
-	if(cudaErr == cudaSuccess && driverVersion >= CUDART_VERSION)
-	{
-		int deviceNum = -1;
-		cudaErr = cudaGetDevice(&deviceNum);
-
-		if(cudaErr == cudaSuccess)
-		{
-			CUresult cuErr = cuDeviceGet(&cudaDevice, deviceNum);
-
-			if(cuErr == CUDA_SUCCESS)
-			{
-				assert(nvenc.version == 0);
-
-				const uint32_t sdkVersion = (NVENCAPI_MAJOR_VERSION << 4) | NVENCAPI_MINOR_VERSION;
-
-				uint32_t version = 0;
-				NVENCSTATUS nverr = NvEncodeAPIGetMaxSupportedVersion(&version);
-
-				if(nverr == NV_ENC_SUCCESS && sdkVersion <= version)
-				{
-					nvenc.version = NV_ENCODE_API_FUNCTION_LIST_VER;
-
-					nverr = NvEncodeAPICreateInstance(&nvenc);
-
-					if(nverr != NV_ENC_SUCCESS)
-						nvenc.version = 0;
-				}
-			}
-		}
-	}
+	NVENCEncoder::initialize();
 #endif
+}
+
+bool
+VideoEncoder::haveCodec(AV1_Codec av1Codec)
+{
+	if(av1Codec == AV1_CODEC_NVENC)
+	{
+	#ifdef WEBM_HAVE_NVENC
+		return NVENCEncoder::available();
+	#else
+		return false;
+	#endif
+	}
+	else
+		return true;
 }
 
 typedef enum {
@@ -634,15 +590,33 @@ typedef enum {
 } VideoEncoderLibrary;
 
 static VideoEncoderLibrary
-WhichVideoEncoder(WebM_Video_Codec codec, AV1_Codec av1Codec)
+WhichVideoEncoder(WebM_Video_Codec codec, AV1_Codec av1Codec, WebM_Video_Method method, WebM_Chroma_Sampling sampling, int bitDepth, uint32_t width, uint32_t height, bool alpha)
 {
 	if(codec == WEBM_CODEC_AV1)
-	{
-		if(av1Codec == AV1_CODEC_AOM)
+	{	
+		if(av1Codec == AV1_CODEC_AUTO)
+		{
+			VideoEncoderLibrary lib = (VideoEncoder::haveCodec(AV1_CODEC_NVENC) ? NVENC : SVT_AV1);
+
+			if(lib == NVENC)
+			{
+				if(sampling != WEBM_420 || bitDepth > 10)
+					lib = SVT_AV1;
+			}
+
+			if(lib == SVT_AV1)
+			{
+				if(sampling != WEBM_420 || bitDepth > 10 || width % 2 != 0 || height % 2 != 0 || (method == WEBM_METHOD_BITRATE && alpha))
+					lib = AOM;
+			}
+
+			return lib;
+		}
+		else if(av1Codec == AV1_CODEC_AOM)
 			return AOM;
 		else if(av1Codec == AV1_CODEC_NVENC)
 			return NVENC;
-		else
+		else if (av1Codec == AV1_CODEC_SVT_AV1)
 			return SVT_AV1;
 	}
 	else
@@ -650,9 +624,9 @@ WhichVideoEncoder(WebM_Video_Codec codec, AV1_Codec av1Codec)
 }
 
 bool
-VideoEncoder::twoPassCapable(WebM_Video_Codec codec, AV1_Codec av1Codec)
+VideoEncoder::twoPassCapable(WebM_Video_Codec codec, AV1_Codec av1Codec, WebM_Video_Method method, WebM_Chroma_Sampling sampling, int bitDepth, uint32_t width, uint32_t height, bool alpha)
 {
-	const VideoEncoderLibrary library = WhichVideoEncoder(codec, av1Codec);
+	const VideoEncoderLibrary library = WhichVideoEncoder(codec, av1Codec, method, sampling, bitDepth, width, height, alpha);
 	
 	return (library == LIBVPX || library == AOM);
 }
@@ -668,7 +642,68 @@ VideoEncoder::makeEncoder(int width, int height, const exRatioValue &pixelAspect
 							WebM_ColorSpace colorSpace, const std::string &custom,
 							PrSDKPPixSuite *pixSuite, PrSDKPPix2Suite *pix2Suite, bool alpha)
 {
-	const VideoEncoderLibrary library = WhichVideoEncoder(codec, av1Codec);
+	VideoEncoderLibrary library = WhichVideoEncoder(codec, av1Codec, method, sampling, bitDepth, width, height, alpha);
+	
+	if(library == NVENC)
+	{
+	#ifdef WEBM_HAVE_NVENC
+		if(NVENCEncoder::available())
+		{
+			try
+			{
+				return new NVENCEncoder(width, height, pixelAspect,
+										fps,
+										method, quality, bitrate,
+										twoPass, vbrPass, vbrBuffer, vbrBufferSize,
+										keyframeMaxDistance, forceKeyframes,
+										sampling, bitDepth,
+										colorSpace, custom,
+										pixSuite, pix2Suite, alpha);
+			}
+			catch(...){}
+		}
+	#endif //WEBM_HAVE_NVENC
+
+		assert(false);
+		
+		if(av1Codec == AV1_CODEC_NVENC)
+			throw exportReturn_InternalError;
+		else
+			library = SVT_AV1;
+	}
+
+	if(library == SVT_AV1)
+	{
+		try
+		{
+			return new SVTAV1Encoder(width, height, pixelAspect,
+										fps,
+										method, quality, bitrate,
+										twoPass, vbrPass, vbrBuffer, vbrBufferSize,
+										keyframeMaxDistance, forceKeyframes,
+										sampling, bitDepth,
+										colorSpace, custom,
+										pixSuite, pix2Suite, alpha);
+		}
+		catch (...) {}
+
+		if(av1Codec == AV1_CODEC_SVT_AV1)
+			throw exportReturn_InternalError;
+		else
+			library = AOM;
+	}
+
+	if(library == AOM)
+	{
+		return new AOMEncoder(width, height, pixelAspect,
+								fps,
+								method, quality, bitrate,
+								twoPass, vbrPass, vbrBuffer, vbrBufferSize,
+								keyframeMaxDistance, forceKeyframes,
+								sampling, bitDepth,
+								colorSpace, custom,
+								pixSuite, pix2Suite, alpha);
+	}
 	
 	if(library == LIBVPX)
 	{
@@ -682,31 +717,8 @@ VideoEncoder::makeEncoder(int width, int height, const exRatioValue &pixelAspect
 									colorSpace, custom,
 									pixSuite, pix2Suite, alpha);
 	}
-	else if(library == AOM)
-	{
-		return new AOMEncoder(width, height, pixelAspect,
-								fps,
-								method, quality, bitrate,
-								twoPass, vbrPass, vbrBuffer, vbrBufferSize,
-								keyframeMaxDistance, forceKeyframes,
-								sampling, bitDepth,
-								colorSpace, custom,
-								pixSuite, pix2Suite, alpha);
-	}
-	else if(library == SVT_AV1)
-	{
-		return new SVTAV1Encoder(width, height, pixelAspect,
-									fps,
-									method, quality, bitrate,
-									twoPass, vbrPass, vbrBuffer, vbrBufferSize,
-									keyframeMaxDistance, forceKeyframes,
-									sampling, bitDepth,
-									colorSpace, custom,
-									pixSuite, pix2Suite, alpha);
-	}
 
-	else
-		throw exportReturn_InternalError;
+	throw exportReturn_InternalError;
 }
 
 

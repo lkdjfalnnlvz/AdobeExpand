@@ -38,8 +38,7 @@
 
 #include "WebM_Premiere_Opus.h"
 
-
-//extern int g_num_cpus;
+#include <assert.h>
 
 
 OpusEncoder::OpusEncoder(int channels, float sampleRate, Ogg_Method method, float quality, int bitrate, bool autoBitrate) :
@@ -242,4 +241,6 @@ bool
 OpusEncoder::endOfStream()
 {
 	assert(false);
+
+	return true;
 }

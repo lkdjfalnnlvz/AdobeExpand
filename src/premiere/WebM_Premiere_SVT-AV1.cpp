@@ -40,9 +40,9 @@
 
 #include <sstream>
 
+#include <assert.h>
 
 extern int g_num_cpus;
-
 
 static int
 mylog2(int val)
@@ -72,8 +72,8 @@ SVTAV1Encoder::SVTAV1Encoder(int width, int height, const exRatioValue &pixelAsp
 	_privateData(NULL),
 	_privateSize(0),
 	_vbrPass(twoPass && vbrPass),
-	_forceKeyframes(forceKeyframes),
 	_keyframeMaxDistance(keyframeMaxDistance),
+	_forceKeyframes(forceKeyframes),
 	_sampling(sampling),
 	_bitDepth(bitDepth),
 	_colorSpace(colorSpace)
@@ -84,6 +84,8 @@ SVTAV1Encoder::SVTAV1Encoder(int width, int height, const exRatioValue &pixelAsp
 	
 	if(err == EB_ErrorNone)
 	{
+		assert(width % 2 == 0 && height % 2 == 0);
+
 		config.source_width = width;
 		config.source_height = height;
 	

@@ -40,6 +40,7 @@
 
 #include <sstream>
 
+#include <assert.h>
 
 extern int g_num_cpus;
 

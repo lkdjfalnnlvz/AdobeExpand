@@ -136,14 +136,28 @@
     <ClInclude Include="..\..\ext\Premiere Pro CC 13.0 Win SDK\Examples\Headers\SPConfig.h" />
     <ClInclude Include="..\..\ext\Premiere Pro CC 13.0 Win SDK\Examples\Headers\SPErrorCodes.h" />
     <ClInclude Include="..\..\ext\Premiere Pro CC 13.0 Win SDK\Examples\Headers\SPTypes.h" />
+    <ClInclude Include="..\..\src\premiere\WebM_Premiere_aom.h" />
+    <ClInclude Include="..\..\src\premiere\WebM_Premiere_Codecs.h" />
     <ClInclude Include="..\..\src\premiere\WebM_Premiere_Export.h" />
     <ClInclude Include="..\..\src\premiere\WebM_Premiere_Export_Params.h" />
     <ClInclude Include="..\..\src\premiere\WebM_Premiere_Import.h" />
+    <ClInclude Include="..\..\src\premiere\WebM_Premiere_libvpx.h" />
+    <ClInclude Include="..\..\src\premiere\WebM_Premiere_NVENC.h" />
+    <ClInclude Include="..\..\src\premiere\WebM_Premiere_Opus.h" />
+    <ClInclude Include="..\..\src\premiere\WebM_Premiere_SVT-AV1.h" />
+    <ClInclude Include="..\..\src\premiere\WebM_Premiere_Vorbis.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="..\..\src\premiere\WebM_Premiere_aom.cpp" />
+    <ClCompile Include="..\..\src\premiere\WebM_Premiere_Codecs.cpp" />
     <ClCompile Include="..\..\src\premiere\WebM_Premiere_Export.cpp" />
     <ClCompile Include="..\..\src\premiere\WebM_Premiere_Export_Params.cpp" />
     <ClCompile Include="..\..\src\premiere\WebM_Premiere_Import.cpp" />
+    <ClCompile Include="..\..\src\premiere\WebM_Premiere_libvpx.cpp" />
+    <ClCompile Include="..\..\src\premiere\WebM_Premiere_NVENC.cpp" />
+    <ClCompile Include="..\..\src\premiere\WebM_Premiere_Opus.cpp" />
+    <ClCompile Include="..\..\src\premiere\WebM_Premiere_SVT-AV1.cpp" />
+    <ClCompile Include="..\..\src\premiere\WebM_Premiere_Vorbis.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

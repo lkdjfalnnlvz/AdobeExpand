@@ -40,6 +40,7 @@
 
 #include <sstream>
 
+#include <assert.h>
 
 extern int g_num_cpus;
 
@@ -281,12 +282,12 @@ AOMEncoder::compressFrame(const PPixHand &frame, PrTime time, PrTime duration)
 		yuv.bitDepth = _bitDepth;
 		yuv.colorSpace = _colorSpace;
 		yuv.fullRange = false;
-		yuv.y = img->planes[VPX_PLANE_Y];
-		yuv.u = img->planes[VPX_PLANE_U];
-		yuv.v = img->planes[VPX_PLANE_V];
-		yuv.yRowbytes = img->stride[VPX_PLANE_Y];
-		yuv.uRowbytes = img->stride[VPX_PLANE_U];
-		yuv.vRowbytes = img->stride[VPX_PLANE_V];
+		yuv.y = img->planes[AOM_PLANE_Y];
+		yuv.u = img->planes[AOM_PLANE_U];
+		yuv.v = img->planes[AOM_PLANE_V];
+		yuv.yRowbytes = img->stride[AOM_PLANE_Y];
+		yuv.uRowbytes = img->stride[AOM_PLANE_U];
+		yuv.vRowbytes = img->stride[AOM_PLANE_V];
 		
 		CopyPixToBuffer(yuv, frame);
 	

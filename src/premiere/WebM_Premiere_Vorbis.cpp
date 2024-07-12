@@ -38,8 +38,8 @@
 
 #include "WebM_Premiere_Vorbis.h"
 
+#include <assert.h>
 
-//extern int g_num_cpus;
 
 static void
 vorbis_get_limits(int audioChannels, float sampleRate, long &min_bitrate, long &max_bitrate)

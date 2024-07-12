@@ -108,12 +108,14 @@ class VideoEncoder
 	template <typename BGRA_PIX, typename BUF_PIX, bool isARGB>
 	void CopyBGRAToBuffer(const YUVBuffer &buf, const uint8_t *frameBufferP, ptrdiff_t rowbytes);
 	
-	bool quotedTokenize(const std::string &str, std::vector<std::string> &tokens, const std::string &delimiters);
+	static bool quotedTokenize(const std::string &str, std::vector<std::string> &tokens, const std::string &delimiters);
 
   public:
 	static void initialize();
 	
-	static bool twoPassCapable(WebM_Video_Codec codec, AV1_Codec av1Codec);
+	static bool haveCodec(AV1_Codec av1Codec);
+
+	static bool twoPassCapable(WebM_Video_Codec codec, AV1_Codec av1Codec, WebM_Video_Method method, WebM_Chroma_Sampling sampling, int bitDepth, uint32_t width, uint32_t height, bool alpha);
 	
 	static VideoEncoder * makeEncoder(int width, int height, const exRatioValue &pixelAspect,
 										const exRatioValue &fps,

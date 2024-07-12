@@ -36,26 +36,24 @@
 //
 // ------------------------------------------------------------------------
 
-#ifndef WEBM_PREMIERE_SVT_AV1_H
-#define WEBM_PREMIERE_SVT_AV1_H
+#ifndef WEBM_PREMIERE_NVENC_H
+#define WEBM_PREMIERE_NVENC_H
 
 #include "WebM_Premiere_Codecs.h"
 
-#include "EbSvtAv1Enc.h"
+#ifndef WEBM_HAVE_NVENC
+#error "Looks like this shouldn't be included"
+#endif
 
-// from EbSequenceControlSet.h
-enum {
-    SVT_SINGLE_PASS, //single pass mode
-    SVT_FIRST_PASS, // first pass of two pass mode
-    SVT_SECOND_PASS, // Second pass of two pass mode
-    SVT_MAX_ENCODE_PASS = 2,
-};
+#include <vector>
 
+#include <cuda.h>
+#include <nvEncodeAPI.h>
 
-class SVTAV1Encoder : public VideoEncoder
+class NVENCEncoder : public VideoEncoder
 {
   public:
-	SVTAV1Encoder(int width, int height, const exRatioValue &pixelAspect,
+	NVENCEncoder(int width, int height, const exRatioValue &pixelAspect,
 					const exRatioValue &fps,
 					WebM_Video_Method method, int quality, int bitrate,
 					bool twoPass, bool vbrPass, void *vbrBuffer, size_t vbrBufferSize,
@@ -63,7 +61,7 @@ class SVTAV1Encoder : public VideoEncoder
 					WebM_Chroma_Sampling sampling, int bitDepth,
 					WebM_ColorSpace colorSpace, const std::string &custom,
 					PrSDKPPixSuite *pixSuite, PrSDKPPix2Suite *pix2Suite, bool alpha);
-	virtual ~SVTAV1Encoder();
+	virtual ~NVENCEncoder();
 	
 	virtual void * getPrivateData(size_t &size);
 	
@@ -72,15 +70,19 @@ class SVTAV1Encoder : public VideoEncoder
 
   private:
 	void checkForPackets();
-	void applyCustom(EbSvtAv1EncConfiguration &config, const std::string &custom);
+	void applyCustom(NV_ENC_CONFIG &config, const std::string &custom);
 
   private:
-	EbComponentType *_encoder;
-	bool _eos;
-	
-	EbBufferHeaderType _header;
-	EbSvtIOFormat _image;
-	
+	CUcontext _cudaContext;
+	void *_encoder;
+	NV_ENC_BUFFER_FORMAT _format;
+
+	int _input_buffer_idx;
+	std::vector<NV_ENC_INPUT_PTR> _input_buffers;
+	bool _output_available;
+	int _output_buffer_idx;
+	std::vector<NV_ENC_OUTPUT_PTR> _output_buffers;
+
 	void *_privateData;
 	size_t _privateSize;
 	
@@ -90,6 +92,10 @@ class SVTAV1Encoder : public VideoEncoder
 	const WebM_Chroma_Sampling _sampling;
 	const int _bitDepth;
 	const WebM_ColorSpace _colorSpace;
+
+  public:
+	static void initialize();
+	static bool available();
 };
 
-#endif // WEBM_PREMIERE_SVT_AV1_H
+#endif // WEBM_PREMIERE_NVENC_H
