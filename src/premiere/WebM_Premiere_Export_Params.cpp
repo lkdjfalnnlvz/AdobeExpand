@@ -1568,13 +1568,14 @@ exSDKValidateParamChanged (
 	
 	if(param == WebMVideoCodec || param == WebMVP9Codec || param == WebMAV1Codec)
 	{
-		exParamValues codecValue, vp9codecValue, av1codecValue, samplingValue, bitDepthValue;
+		exParamValues codecValue, vp9codecValue, av1codecValue, samplingValue, bitDepthValue, twoPassValue;
 		
 		paramSuite->GetParamValue(exID, gIdx, WebMVideoCodec, &codecValue);
 		paramSuite->GetParamValue(exID, gIdx, WebMVP9Codec, &vp9codecValue);
 		paramSuite->GetParamValue(exID, gIdx, WebMAV1Codec, &av1codecValue);
 		paramSuite->GetParamValue(exID, gIdx, WebMVideoSampling, &samplingValue);
 		paramSuite->GetParamValue(exID, gIdx, WebMVideoBitDepth, &bitDepthValue);
+		paramSuite->GetParamValue(exID, gIdx, WebMVideoTwoPass, &twoPassValue);
 		
 		const bool only420 = (codecValue.value.intValue == WEBM_CODEC_AV1 && (av1codecValue.value.intValue == AV1_CODEC_SVT_AV1 || av1codecValue.value.intValue == AV1_CODEC_NVENC));
 
@@ -1588,11 +1589,15 @@ exSDKValidateParamChanged (
 		samplingValue.disabled = (codecValue.value.intValue == WEBM_CODEC_VP8 || only420);
 		vp9codecValue.hidden = (codecValue.value.intValue != WEBM_CODEC_VP9);
 		av1codecValue.hidden = (codecValue.value.intValue != WEBM_CODEC_AV1);
+		twoPassValue.disabled = !((codecValue.value.intValue == WEBM_CODEC_VP8) ||
+									(codecValue.value.intValue == WEBM_CODEC_VP9 && vp9codecValue.value.intValue != VP9_CODEC_VPL) ||
+									(codecValue.value.intValue == WEBM_CODEC_AV1 && (av1codecValue.value.intValue == AV1_CODEC_AUTO || av1codecValue.value.intValue == AV1_CODEC_AOM)));
 
 		paramSuite->ChangeParam(exID, gIdx, WebMVP9Codec, &vp9codecValue);
 		paramSuite->ChangeParam(exID, gIdx, WebMAV1Codec, &av1codecValue);
 		paramSuite->ChangeParam(exID, gIdx, WebMVideoSampling, &samplingValue);
 		paramSuite->ChangeParam(exID, gIdx, WebMVideoBitDepth, &bitDepthValue);
+		paramSuite->ChangeParam(exID, gIdx, WebMVideoTwoPass, &twoPassValue);
 	}
 	else if(param == WebMVideoMethod)
 	{

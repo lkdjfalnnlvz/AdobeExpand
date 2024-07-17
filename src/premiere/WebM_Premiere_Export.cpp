@@ -515,7 +515,6 @@ exSDKExport(
 	const bool use_vp8 = (video_codec == WEBM_CODEC_VP8);
 	const VP9_Codec vp9_codec = (VP9_Codec)vp9codecP.value.intValue;
 	const AV1_Codec av1_codec = (AV1_Codec)av1codecP.value.intValue;
-	const bool av1_auto = (av1_codec == AV1_CODEC_AUTO);
 	const bool nvenc_codec = (video_codec == WEBM_CODEC_AV1 && av1_codec == AV1_CODEC_NVENC);
 	const WebM_Video_Method method = (WebM_Video_Method)methodP.value.intValue;
 	const WebM_Chroma_Sampling chroma = ((use_vp8 || nvenc_codec) ? WEBM_420 : (WebM_Chroma_Sampling)samplingP.value.intValue);
