@@ -45,6 +45,9 @@
 #ifdef WEBM_HAVE_NVENC
 #include "WebM_Premiere_NVENC.h"
 #endif
+#ifdef WEBM_HAVE_VPL
+#include "WebM_Premiere_VPL.h"
+#endif
 
 #include "WebM_Premiere_Vorbis.h"
 #include "WebM_Premiere_Opus.h"
@@ -236,6 +239,97 @@ VideoEncoder::CopyPixToBuffer(const YUVBuffer &buf, const PPixHand &pix)
 		else
 			assert(false);
 	}
+}
+
+void
+VideoEncoder::CopyPixToBuffer(const NV12Buffer &buf, const PPixHand &pix)
+{
+	// Semi-planar!
+	const uint32_t uvHeight = buf.height / (buf.sampling == WEBM_420 ? 2 : 1);
+	const uint32_t uvWidth = buf.width / (buf.sampling == WEBM_444 ? 1 : 2);
+	const size_t bytesPerPixel = (buf.bitDepth > 8 ? 2 : 1);
+
+	const size_t uvRowbytes = uvWidth * bytesPerPixel;
+
+	uint8_t *uvPlanar = (uint8_t *)malloc(2 * uvHeight * uvRowbytes);
+
+	if(uvPlanar == NULL)
+		throw exportReturn_ErrMemory;
+
+	uint8_t *uPlane = uvPlanar;
+	uint8_t *vPlane = uvPlanar + (uvRowbytes * uvHeight);
+
+	YUVBuffer yuv;
+
+	yuv.width = buf.width;
+	yuv.height = buf.height;
+	yuv.sampling = buf.sampling;
+	yuv.bitDepth = buf.bitDepth;
+	yuv.colorSpace = buf.colorSpace;
+	yuv.fullRange = buf.fullRange;
+	yuv.y = buf.y;
+	yuv.u = uPlane;
+	yuv.v = vPlane;
+	yuv.yRowbytes = buf.yRowbytes;
+	yuv.uRowbytes = uvRowbytes;
+	yuv.vRowbytes = uvRowbytes;
+
+	CopyPixToBuffer(yuv, pix);
+
+	if(buf.bitDepth > 8)
+	{
+		for(int y=0; y < uvHeight; y++)
+		{
+			uint16_t *uvPix = (uint16_t *)(buf.uv + (y * buf.uvRowbytes));
+			uint16_t *uPix = (uint16_t *)(yuv.u + (y * yuv.uRowbytes));
+			uint16_t *vPix = (uint16_t *)(yuv.v + (y * yuv.vRowbytes));
+
+			if(buf.uvReversed)
+			{
+				for(int x=0; x < uvWidth; x++)
+				{
+					*uvPix++ = *vPix++;
+					*uvPix++ = *uPix++;
+				}
+			}
+			else
+			{
+				for(int x=0; x < uvWidth; x++)
+				{
+					*uvPix++ = *uPix++;
+					*uvPix++ = *vPix++;
+				}
+			}
+		}
+	}
+	else
+	{
+		for(int y=0; y < uvHeight; y++)
+		{
+			uint8_t *uvPix = (buf.uv + (y * buf.uvRowbytes));
+			uint8_t *uPix = (yuv.u + (y * yuv.uRowbytes));
+			uint8_t *vPix = (yuv.v + (y * yuv.vRowbytes));
+
+			if(buf.uvReversed)
+			{
+				for(int x=0; x < uvWidth; x++)
+				{
+					*uvPix++ = *vPix++;
+					*uvPix++ = *uPix++;
+				}
+			}
+			else
+			{
+				for(int x=0; x < uvWidth; x++)
+				{
+					*uvPix++ = *uPix++;
+					*uvPix++ = *vPix++;
+				}
+			}
+		}
+	}
+
+	free(uvPlanar);
 }
 
 // converting from Adobe 16-bit to regular 16-bit
@@ -565,6 +659,24 @@ VideoEncoder::initialize()
 #ifdef WEBM_HAVE_NVENC
 	NVENCEncoder::initialize();
 #endif
+#ifdef WEBM_HAVE_VPL
+	IntelVPLEncoder::initialize();
+#endif
+}
+
+bool
+VideoEncoder::haveCodec(VP9_Codec vpx9codec)
+{
+	if(vpx9codec == AV1_CODEC_VPL)
+	{
+	#ifdef WEBM_HAVE_VPL
+		return IntelVPLEncoder::available(IntelVPLEncoder::VP9);
+	#else
+		return false;
+	#endif
+	}
+	else
+		return true;
 }
 
 bool
@@ -578,6 +690,14 @@ VideoEncoder::haveCodec(AV1_Codec av1Codec)
 		return false;
 	#endif
 	}
+	else if(av1Codec == AV1_CODEC_VPL)
+	{
+	#ifdef WEBM_HAVE_VPL
+		return IntelVPLEncoder::available(IntelVPLEncoder::AV1);
+	#else
+		return false;
+	#endif
+	}
 	else
 		return true;
 }
@@ -586,22 +706,32 @@ typedef enum {
 	LIBVPX,
 	AOM,
 	SVT_AV1,
-	NVENC
+	NVENC,
+	VPL
 } VideoEncoderLibrary;
 
 static VideoEncoderLibrary
-WhichVideoEncoder(WebM_Video_Codec codec, AV1_Codec av1Codec, WebM_Video_Method method, WebM_Chroma_Sampling sampling, int bitDepth, uint32_t width, uint32_t height, bool alpha)
+WhichVideoEncoder(WebM_Video_Codec codec, VP9_Codec vp9codec, AV1_Codec av1Codec, WebM_Video_Method method, WebM_Chroma_Sampling sampling, int bitDepth, uint32_t width, uint32_t height, bool alpha)
 {
 	if(codec == WEBM_CODEC_AV1)
 	{	
 		if(av1Codec == AV1_CODEC_AUTO)
 		{
-			VideoEncoderLibrary lib = (VideoEncoder::haveCodec(AV1_CODEC_NVENC) ? NVENC : SVT_AV1);
+			VideoEncoderLibrary lib = (VideoEncoder::haveCodec(AV1_CODEC_NVENC) ? NVENC :
+										VideoEncoder::haveCodec(AV1_CODEC_VPL) ? VPL :
+										SVT_AV1);
 
 			if(lib == NVENC)
 			{
 				if(sampling != WEBM_420 || bitDepth > 10)
-					lib = SVT_AV1;
+					lib = (VideoEncoder::haveCodec(AV1_CODEC_VPL) ? VPL : SVT_AV1);
+			}
+
+			if(lib == VPL)
+			{
+				// Skipping right now because I can't get Private Data and don't have hardware to test.
+				// libwebm requires Private Data for AV1 but I commented out the enforcement, shhh!
+				lib = SVT_AV1;
 			}
 
 			if(lib == SVT_AV1)
@@ -614,19 +744,52 @@ WhichVideoEncoder(WebM_Video_Codec codec, AV1_Codec av1Codec, WebM_Video_Method 
 		}
 		else if(av1Codec == AV1_CODEC_AOM)
 			return AOM;
+		else if (av1Codec == AV1_CODEC_VPL)
+			return VPL;
 		else if(av1Codec == AV1_CODEC_NVENC)
 			return NVENC;
-		else if (av1Codec == AV1_CODEC_SVT_AV1)
+		else
+		{
+			assert(av1Codec == AV1_CODEC_SVT_AV1);
+
 			return SVT_AV1;
+		}
+	}
+	else if(codec == WEBM_CODEC_VP9)
+	{
+		if(vp9codec == VP9_CODEC_AUTO)
+		{
+			VideoEncoderLibrary lib = (VideoEncoder::haveCodec(VP9_CODEC_VPL) ? VPL : LIBVPX);
+
+			if(lib == VPL)
+			{
+				if(sampling == WEBM_422 || bitDepth > 10)
+					lib = LIBVPX;
+			}
+
+			return lib;
+		}
+		else if(vp9codec == VP9_CODEC_LIBVPX)
+			return LIBVPX;
+		else
+		{
+			assert(vp9codec == VP9_CODEC_VPL);
+
+			return VPL;
+		}
 	}
 	else
+	{
+		assert(codec == WEBM_CODEC_VP8);
+
 		return LIBVPX;
+	}
 }
 
 bool
-VideoEncoder::twoPassCapable(WebM_Video_Codec codec, AV1_Codec av1Codec, WebM_Video_Method method, WebM_Chroma_Sampling sampling, int bitDepth, uint32_t width, uint32_t height, bool alpha)
+VideoEncoder::twoPassCapable(WebM_Video_Codec codec, VP9_Codec vp9codec, AV1_Codec av1codec, WebM_Video_Method method, WebM_Chroma_Sampling sampling, int bitDepth, uint32_t width, uint32_t height, bool alpha)
 {
-	const VideoEncoderLibrary library = WhichVideoEncoder(codec, av1Codec, method, sampling, bitDepth, width, height, alpha);
+	const VideoEncoderLibrary library = WhichVideoEncoder(codec, vp9codec, av1codec, method, sampling, bitDepth, width, height, alpha);
 	
 	return (library == LIBVPX || library == AOM);
 }
@@ -634,7 +797,7 @@ VideoEncoder::twoPassCapable(WebM_Video_Codec codec, AV1_Codec av1Codec, WebM_Vi
 VideoEncoder *
 VideoEncoder::makeEncoder(int width, int height, const exRatioValue &pixelAspect,
 							const exRatioValue &fps,
-							WebM_Video_Codec codec, AV1_Codec av1Codec,
+							WebM_Video_Codec codec, VP9_Codec vp9codec, AV1_Codec av1Codec,
 							WebM_Video_Method method, int quality, int bitrate,
 							bool twoPass, bool vbrPass, void *vbrBuffer, size_t vbrBufferSize,
 							int keyframeMaxDistance, bool forceKeyframes,
@@ -642,7 +805,7 @@ VideoEncoder::makeEncoder(int width, int height, const exRatioValue &pixelAspect
 							WebM_ColorSpace colorSpace, const std::string &custom,
 							PrSDKPPixSuite *pixSuite, PrSDKPPix2Suite *pix2Suite, bool alpha)
 {
-	VideoEncoderLibrary library = WhichVideoEncoder(codec, av1Codec, method, sampling, bitDepth, width, height, alpha);
+	VideoEncoderLibrary library = WhichVideoEncoder(codec, vp9codec, av1Codec, method, sampling, bitDepth, width, height, alpha);
 	
 	if(library == NVENC)
 	{
@@ -670,6 +833,46 @@ VideoEncoder::makeEncoder(int width, int height, const exRatioValue &pixelAspect
 			throw exportReturn_InternalError;
 		else
 			library = SVT_AV1;
+	}
+
+	if(library == VPL)
+	{
+	#ifdef WEBM_HAVE_VPL
+		const IntelVPLEncoder::Codec vplCodec = (codec == WEBM_CODEC_AV1 ? IntelVPLEncoder::AV1 :
+													IntelVPLEncoder::VP9);
+
+		if(IntelVPLEncoder::available(vplCodec))
+		{
+			try
+			{
+				return new IntelVPLEncoder(width, height, pixelAspect,
+											fps,
+											vplCodec,
+											method, quality, bitrate,
+											twoPass, vbrPass, vbrBuffer, vbrBufferSize,
+											keyframeMaxDistance, forceKeyframes,
+											sampling, bitDepth,
+											colorSpace, custom,
+											pixSuite, pix2Suite, alpha);
+			}
+			catch (...) {}
+		}
+	#endif //WEBM_HAVE_VPL
+
+		assert(false);
+
+		if((codec == WEBM_CODEC_VP9 && vp9codec == VP9_CODEC_VPL) ||
+			(codec == WEBM_CODEC_AV1 && av1Codec == AV1_CODEC_VPL))
+		{
+			throw exportReturn_InternalError;
+		}
+		else
+		{
+			if(codec == WEBM_CODEC_AV1)
+				library = SVT_AV1;
+			else
+				library = LIBVPX;
+		}
 	}
 
 	if(library == SVT_AV1)

@@ -595,62 +595,44 @@ NVENCEncoder::compressFrame(const PPixHand &frame, PrTime time, PrTime duration)
 
 		const bool subsampled = !(_format == NV_ENC_BUFFER_FORMAT_YUV444 || _format == NV_ENC_BUFFER_FORMAT_YUV444_10BIT);
 
-		YUVBuffer yuv;
-
-		yuv.width = width;
-		yuv.height = height;
-		yuv.sampling = _sampling;
-		yuv.bitDepth = (_format == NV_ENC_BUFFER_FORMAT_YUV420_10BIT || _format == NV_ENC_BUFFER_FORMAT_YUV444_10BIT) ? 16 : 8; // for 10-bit, data is in the "high bits", so full 16-bit
-		yuv.colorSpace = _colorSpace;
-		yuv.fullRange = _alpha;
-		yuv.yRowbytes = lockParams.pitch; // pitch == rowbytes
-		yuv.uRowbytes = (lockParams.pitch / (subsampled ? 2 : 1));
-		yuv.vRowbytes = yuv.uRowbytes;
-
-		unsigned char *planarYUV = (unsigned char *)lockParams.bufferDataPtr;
-
 		if(_format == NV_ENC_BUFFER_FORMAT_YUV420_10BIT)
 		{
 			assert(subsampled);
 
-			// semi-planar?!?
-			planarYUV = (unsigned char *)malloc((yuv.yRowbytes * height) + (yuv.uRowbytes * height / 2) + (yuv.vRowbytes * height / 2));
+			NV12Buffer yuv;
 
-			if(planarYUV == NULL)
-				throw exportReturn_ErrMemory;
+			yuv.width = width;
+			yuv.height = height;
+			yuv.sampling = _sampling;
+			yuv.bitDepth = (_format == NV_ENC_BUFFER_FORMAT_YUV420_10BIT || _format == NV_ENC_BUFFER_FORMAT_YUV444_10BIT) ? 16 : 8; // for 10-bit, data is in the "high bits", so full 16-bit
+			yuv.colorSpace = _colorSpace;
+			yuv.fullRange = _alpha;
+			yuv.yRowbytes = lockParams.pitch; // pitch == rowbytes
+			yuv.uvRowbytes = (2 * lockParams.pitch / (subsampled ? 2 : 1));
+			yuv.y = (uint8_t *)lockParams.bufferDataPtr;
+			yuv.uv = yuv.y + (yuv.yRowbytes * yuv.height);
+			yuv.uvReversed = false;
+
+			CopyPixToBuffer(yuv, frame);
 		}
-
-		yuv.y = planarYUV;
-		yuv.u = yuv.y + (height * yuv.yRowbytes);
-		yuv.v = yuv.u + (height * yuv.uRowbytes);
-
-
-		CopyPixToBuffer(yuv, frame);
-
-
-		if(_format == NV_ENC_BUFFER_FORMAT_YUV420_10BIT)
+		else
 		{
-			unsigned char *semiPlanarYUV = (unsigned char*)lockParams.bufferDataPtr;
+			YUVBuffer yuv;
 
-			assert(yuv.bitDepth == 16);
-			assert(yuv.yRowbytes == (sizeof(unsigned char) * lockParams.pitch));
+			yuv.width = width;
+			yuv.height = height;
+			yuv.sampling = _sampling;
+			yuv.bitDepth = (_format == NV_ENC_BUFFER_FORMAT_YUV420_10BIT || _format == NV_ENC_BUFFER_FORMAT_YUV444_10BIT) ? 16 : 8; // for 10-bit, data is in the "high bits", so full 16-bit
+			yuv.colorSpace = _colorSpace;
+			yuv.fullRange = _alpha;
+			yuv.yRowbytes = lockParams.pitch; // pitch == rowbytes
+			yuv.uRowbytes = (lockParams.pitch / (subsampled ? 2 : 1));
+			yuv.vRowbytes = yuv.uRowbytes;
+			yuv.y = (uint8_t*)lockParams.bufferDataPtr;
+			yuv.u = yuv.y + (height * yuv.yRowbytes);
+			yuv.v = yuv.u + (height * yuv.uRowbytes / (subsampled ? 2 : 1));
 
-			memcpy(semiPlanarYUV, yuv.y, yuv.yRowbytes * height);
-
-			for(int y=0; y < (height / 2); y++)
-			{
-				unsigned short *pixUV = (unsigned short *)(semiPlanarYUV + (lockParams.pitch * height) + (sizeof(unsigned char) * lockParams.pitch * y));
-				const unsigned short *pixU = (const unsigned short *)(yuv.u + (yuv.uRowbytes * y));
-				const unsigned short *pixV = (const unsigned short *)(yuv.v + (yuv.vRowbytes * y));
-
-				for(int x=0; x < (width / 2); x++)
-				{
-					*pixUV++ = *pixU++;
-					*pixUV++ = *pixV++;
-				}
-			}
-
-			free(planarYUV);
+			CopyPixToBuffer(yuv, frame);
 		}
 
 

@@ -485,9 +485,10 @@ exSDKExport(
 								audioFormat == kPrAudioChannelType_Mono ? 1 :
 								2);
 	
-	exParamValues videoCodecP, av1codecP, methodP, videoQualityP, bitrateP, colorSpaceP, twoPassP, keyframeMaxDistanceP, samplingP, bitDepthP, alphaP, customArgsP;
+	exParamValues videoCodecP, vp9codecP, av1codecP, methodP, videoQualityP, bitrateP, colorSpaceP, twoPassP, keyframeMaxDistanceP, samplingP, bitDepthP, alphaP, customArgsP;
 		
 	paramSuite->GetParamValue(exID, gIdx, WebMVideoCodec, &videoCodecP);
+	paramSuite->GetParamValue(exID, gIdx, WebMVP9Codec, &vp9codecP);
 	paramSuite->GetParamValue(exID, gIdx, WebMAV1Codec, &av1codecP);
 	paramSuite->GetParamValue(exID, gIdx, WebMVideoMethod, &methodP);
 	paramSuite->GetParamValue(exID, gIdx, WebMVideoQuality, &videoQualityP);
@@ -512,7 +513,8 @@ exSDKExport(
 	
 	const WebM_Video_Codec video_codec = (WebM_Video_Codec)videoCodecP.value.intValue;
 	const bool use_vp8 = (video_codec == WEBM_CODEC_VP8);
-	AV1_Codec av1_codec = (AV1_Codec)av1codecP.value.intValue;
+	const VP9_Codec vp9_codec = (VP9_Codec)vp9codecP.value.intValue;
+	const AV1_Codec av1_codec = (AV1_Codec)av1codecP.value.intValue;
 	const bool av1_auto = (av1_codec == AV1_CODEC_AUTO);
 	const bool nvenc_codec = (video_codec == WEBM_CODEC_AV1 && av1_codec == AV1_CODEC_NVENC);
 	const WebM_Video_Method method = (WebM_Video_Method)methodP.value.intValue;
@@ -606,7 +608,7 @@ exSDKExport(
 	try{
 
 	const bool multipass = (exportInfoP->exportVideo && twoPassP.value.intValue &&
-							VideoEncoder::twoPassCapable(video_codec, av1_codec, method, chroma, bit_depth, widthP.value.intValue, heightP.value.intValue, use_alpha));
+							VideoEncoder::twoPassCapable(video_codec, vp9_codec, av1_codec, method, chroma, bit_depth, widthP.value.intValue, heightP.value.intValue, use_alpha));
 	
 	const int passes = (multipass ? 2 : 1);
 	
@@ -626,7 +628,7 @@ exSDKExport(
 		
 			videoEncoder = VideoEncoder::makeEncoder(widthP.value.intValue, heightP.value.intValue, pixelAspectRatioP.value.ratioValue,
 														fps,
-														video_codec, av1_codec,
+														video_codec, vp9_codec, av1_codec,
 														method, videoQualityP.value.intValue, rgbBitrate,
 														multipass, vbr_pass, vbr_buffer, vbr_buffer_size,
 														keyframeMaxDistanceP.value.intValue, use_alpha,
@@ -640,7 +642,7 @@ exSDKExport(
 			
 				videoAlphaEncoder = VideoEncoder::makeEncoder(widthP.value.intValue, heightP.value.intValue, pixelAspectRatioP.value.ratioValue,
 																fps,
-																video_codec, av1_codec,
+																video_codec, vp9_codec, av1_codec,
 																method, videoQualityP.value.intValue, alphaBitrate,
 																multipass, vbr_pass, vbr_buffer, vbr_buffer_size,
 																keyframeMaxDistanceP.value.intValue, true,
@@ -1359,7 +1361,9 @@ DllExport PREMPLUGENTRY xSDKExport (
 		{
 			result = exSDKPostProcessParams(stdParmsP,
 											reinterpret_cast<exPostProcessParamsRec*>(param1),
-											VideoEncoder::haveCodec(AV1_CODEC_NVENC));
+											VideoEncoder::haveCodec(AV1_CODEC_NVENC),
+											VideoEncoder::haveCodec(VP9_CODEC_VPL),
+											VideoEncoder::haveCodec(AV1_CODEC_VPL));
 			break;
 		}
 

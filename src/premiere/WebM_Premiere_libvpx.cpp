@@ -186,8 +186,8 @@ LibVPXEncoder::LibVPXEncoder(int width, int height, const exRatioValue &pixelAsp
 		{
 			vpx_codec_control(&_encoder, VP8E_SET_CPUUSED, 2); // much faster if we do this
 			
-			vpx_codec_control(&_encoder, VP9E_SET_TILE_COLUMNS, mylog2(g_num_cpus)); // this gives us some multithreading
-			vpx_codec_control(&_encoder, VP9E_SET_FRAME_PARALLEL_DECODING, 1);
+			//vpx_codec_control(&_encoder, VP9E_SET_TILE_COLUMNS, mylog2(g_num_cpus)); // encoder should be setting this automatically
+			//vpx_codec_control(&_encoder, VP9E_SET_FRAME_PARALLEL_DECODING, 1);
 		}
 	
 		applyCustomPost(custom);

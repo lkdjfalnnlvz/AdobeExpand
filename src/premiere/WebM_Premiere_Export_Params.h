@@ -51,10 +51,17 @@ typedef enum {
 } WebM_Video_Codec;
 
 typedef enum {
+	VP9_CODEC_AUTO = 0,
+	VP9_CODEC_LIBVPX,
+	VP9_CODEC_VPL
+} VP9_Codec;
+
+typedef enum {
 	AV1_CODEC_AUTO = 0,
 	AV1_CODEC_AOM,
 	AV1_CODEC_SVT_AV1,
-	AV1_CODEC_NVENC
+	AV1_CODEC_NVENC,
+	AV1_CODEC_VPL
 } AV1_Codec;
 
 typedef enum {
@@ -79,6 +86,7 @@ typedef enum {
 #define WebMPluginVersion				"WebMPluginVersion"
 
 #define WebMVideoCodec					"WebMVideoCodec"
+#define WebMVP9Codec					"WebMVP9Codec"
 #define WebMAV1Codec					"WebMAV1Codec"
 #define WebMVideoMethod					"WebMVideoMethod"
 #define WebMVideoQuality				"WebMVideoQuality"
@@ -132,7 +140,9 @@ prMALError
 exSDKPostProcessParams(
 	exportStdParms			*stdParmsP, 
 	exPostProcessParamsRec	*postProcessParamsRecP,
-	bool haveNVENC);
+	bool haveNVENC,
+	bool haveVPXVPL,
+	bool haveAV1VPL);
 
 prMALError
 exSDKGetParamSummary(

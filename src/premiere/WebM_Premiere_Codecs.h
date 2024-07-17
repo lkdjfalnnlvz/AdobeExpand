@@ -102,6 +102,27 @@ class VideoEncoder
 	
 	void CopyPixToBuffer(const YUVBuffer &buf, const PPixHand &pix);
 	
+	typedef struct NV12Buffer
+	{
+		uint32_t width;
+		uint32_t height;
+
+		WebM_Chroma_Sampling sampling;
+		uint8_t bitDepth;
+		WebM_ColorSpace colorSpace;
+		bool fullRange;
+
+		uint8_t *y;
+		uint8_t *uv;
+
+		ptrdiff_t yRowbytes;
+		ptrdiff_t uvRowbytes;
+
+		bool uvReversed;
+	} NV12Buffer;
+
+	void CopyPixToBuffer(const NV12Buffer &buf, const PPixHand &pix);
+
 	template <typename VUYA_PIX, typename BUF_PIX>
 	void CopyVUYAToBuffer(const YUVBuffer &buf, const uint8_t *frameBufferP, ptrdiff_t rowbytes);
 	
@@ -113,13 +134,14 @@ class VideoEncoder
   public:
 	static void initialize();
 	
+	static bool haveCodec(VP9_Codec vp9codec);
 	static bool haveCodec(AV1_Codec av1Codec);
 
-	static bool twoPassCapable(WebM_Video_Codec codec, AV1_Codec av1Codec, WebM_Video_Method method, WebM_Chroma_Sampling sampling, int bitDepth, uint32_t width, uint32_t height, bool alpha);
+	static bool twoPassCapable(WebM_Video_Codec codec, VP9_Codec vp9codec, AV1_Codec av1codec, WebM_Video_Method method, WebM_Chroma_Sampling sampling, int bitDepth, uint32_t width, uint32_t height, bool alpha);
 	
 	static VideoEncoder * makeEncoder(int width, int height, const exRatioValue &pixelAspect,
 										const exRatioValue &fps,
-										WebM_Video_Codec codec, AV1_Codec av1Codec,
+										WebM_Video_Codec codec, VP9_Codec vp9codec, AV1_Codec av1Codec,
 										WebM_Video_Method method, int quality, int bitrate,
 										bool twoPass, bool vbrPass, void *vbrBuffer, size_t vbrBufferSize,
 										int keyframeMaxDistance, bool forceKeyframes,

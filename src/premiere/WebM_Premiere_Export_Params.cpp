@@ -385,6 +385,25 @@ exSDKGenerateDefaultParams(
 	exportParamSuite->AddParam(exID, gIdx, ADBEVideoCodecGroup, &codecParam);
 	
 	
+	// VP9 Codec
+	exParamValues vp9codecValues;
+	vp9codecValues.structVersion = 1;
+	vp9codecValues.rangeMin.intValue = VP9_CODEC_AUTO;
+	vp9codecValues.rangeMax.intValue = VP9_CODEC_VPL;
+	vp9codecValues.value.intValue = VP9_CODEC_AUTO;
+	vp9codecValues.disabled = kPrFalse;
+	vp9codecValues.hidden = kPrFalse;
+
+	exNewParamInfo vp9codecParam;
+	vp9codecParam.structVersion = 1;
+	strncpy(vp9codecParam.identifier, WebMVP9Codec, 255);
+	vp9codecParam.paramType = exParamType_int;
+	vp9codecParam.flags = exParamFlag_none;
+	vp9codecParam.paramValues = vp9codecValues;
+
+	exportParamSuite->AddParam(exID, gIdx, ADBEVideoCodecGroup, &vp9codecParam);
+
+
 	// AV1 Codec
 	exParamValues av1CodecValues;
 	av1CodecValues.structVersion = 1;
@@ -464,7 +483,7 @@ exSDKGenerateDefaultParams(
 	// 2-pass
 	exParamValues twoPassValues;
 	twoPassValues.structVersion = 1;
-	twoPassValues.value.intValue = kPrTrue;
+	twoPassValues.value.intValue = kPrFalse; // Most of our encoders can't use this anyway
 	twoPassValues.disabled = kPrFalse;
 	twoPassValues.hidden = kPrFalse;
 	
@@ -790,7 +809,9 @@ prMALError
 exSDKPostProcessParams(
 	exportStdParms			*stdParmsP, 
 	exPostProcessParamsRec	*postProcessParamsRecP,
-	bool haveNVENC)
+	bool haveNVENC,
+	bool haveVPXVPL,
+	bool haveAV1VPL)
 {
 	prMALError		result	= malNoError;
 
@@ -969,24 +990,49 @@ exSDKPostProcessParams(
 	}
 	
 	
+	// VP9 Codec
+	utf16ncpy(paramString, "VP9 Encoder", 255);
+	exportParamSuite->SetParamName(exID, gIdx, WebMVP9Codec, paramString);
+
+	VP9_Codec vpxCodecs[] = { VP9_CODEC_AUTO,
+								VP9_CODEC_LIBVPX,
+								VP9_CODEC_VPL };
+
+	const char *vpxCodecStrings[] = { "Auto",
+										"libvpx",
+										(haveVPXVPL ? "Intel VPL" : "Intel VPL (Not available)") };
+
+	exportParamSuite->ClearConstrainedValues(exID, gIdx, WebMVP9Codec);
+
+	exOneParamValueRec tempVP9Codec;
+	for(int i=0; i < 3; i++)
+	{
+		tempVP9Codec.intValue = vpxCodecs[i];
+		utf16ncpy(paramString, vpxCodecStrings[i], 255);
+		exportParamSuite->AddConstrainedValuePair(exID, gIdx, WebMVP9Codec, &tempVP9Codec, paramString);
+	}
+
+
 	// AV1 Codec
-	utf16ncpy(paramString, "AV1 Codec", 255);
+	utf16ncpy(paramString, "AV1 Encoder", 255);
 	exportParamSuite->SetParamName(exID, gIdx, WebMAV1Codec, paramString);
 
 	AV1_Codec av1codecs[] = { AV1_CODEC_AUTO,
 								AV1_CODEC_AOM,
 								AV1_CODEC_SVT_AV1,
-								AV1_CODEC_NVENC };
+								AV1_CODEC_NVENC,
+								AV1_CODEC_VPL };
 
 	const char *av1codecStrings[] = { "Auto",
 										"AOM",
 										"SVT-AV1",
-										(haveNVENC ? "NVENC" : "NVENC (Not available)") };
+										(haveNVENC ? "NVENC" : "NVENC (Not available)"),
+										(haveAV1VPL ? "Intel VPL" : "Intel VPL (Not available)") };
 
 	exportParamSuite->ClearConstrainedValues(exID, gIdx, WebMAV1Codec);
 
 	exOneParamValueRec tempAV1Codec;
-	for(int i=0; i < 4; i++)
+	for(int i=0; i < 5; i++)
 	{
 		tempAV1Codec.intValue = av1codecs[i];
 		utf16ncpy(paramString, av1codecStrings[i], 255);
@@ -1520,27 +1566,30 @@ exSDKValidateParamChanged (
 	
 	std::string param = validateParamChangedRecP->changedParamIdentifier;
 	
-	if(param == WebMVideoCodec || param == WebMAV1Codec)
+	if(param == WebMVideoCodec || param == WebMVP9Codec || param == WebMAV1Codec)
 	{
-		exParamValues codecValue, av1codecValue, samplingValue, bitDepthValue;
+		exParamValues codecValue, vp9codecValue, av1codecValue, samplingValue, bitDepthValue;
 		
 		paramSuite->GetParamValue(exID, gIdx, WebMVideoCodec, &codecValue);
+		paramSuite->GetParamValue(exID, gIdx, WebMVP9Codec, &vp9codecValue);
 		paramSuite->GetParamValue(exID, gIdx, WebMAV1Codec, &av1codecValue);
 		paramSuite->GetParamValue(exID, gIdx, WebMVideoSampling, &samplingValue);
 		paramSuite->GetParamValue(exID, gIdx, WebMVideoBitDepth, &bitDepthValue);
 		
-		const bool nvenc_codec = (codecValue.value.intValue == WEBM_CODEC_AV1 && av1codecValue.value.intValue == AV1_CODEC_NVENC);
+		const bool only420 = (codecValue.value.intValue == WEBM_CODEC_AV1 && (av1codecValue.value.intValue == AV1_CODEC_SVT_AV1 || av1codecValue.value.intValue == AV1_CODEC_NVENC));
 
-		if(codecValue.value.intValue == WEBM_CODEC_VP8 || nvenc_codec)
+		if(codecValue.value.intValue == WEBM_CODEC_VP8 || only420)
 			samplingValue.value.intValue = WEBM_420;
 
 		if(codecValue.value.intValue == WEBM_CODEC_VP8)
 			bitDepthValue.value.intValue = VPX_BITS_8;
 
 		bitDepthValue.disabled = (codecValue.value.intValue == WEBM_CODEC_VP8);
-		samplingValue.disabled = (codecValue.value.intValue == WEBM_CODEC_VP8 || nvenc_codec);
+		samplingValue.disabled = (codecValue.value.intValue == WEBM_CODEC_VP8 || only420);
+		vp9codecValue.hidden = (codecValue.value.intValue != WEBM_CODEC_VP9);
 		av1codecValue.hidden = (codecValue.value.intValue != WEBM_CODEC_AV1);
 
+		paramSuite->ChangeParam(exID, gIdx, WebMVP9Codec, &vp9codecValue);
 		paramSuite->ChangeParam(exID, gIdx, WebMAV1Codec, &av1codecValue);
 		paramSuite->ChangeParam(exID, gIdx, WebMVideoSampling, &samplingValue);
 		paramSuite->ChangeParam(exID, gIdx, WebMVideoBitDepth, &bitDepthValue);
