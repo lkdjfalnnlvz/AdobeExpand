@@ -223,6 +223,44 @@ IntelVPLEncoder::IntelVPLEncoder(int width, int height, const exRatioValue &pixe
 	if(err != MFX_ERR_NONE)
 		throw exportReturn_InternalError;
 
+
+	mfxExtCodingOptionSPSPPS extSPSPPS = {};
+
+	extSPSPPS.Header.BufferId = MFX_EXTBUFF_CODING_OPTION_SPSPPS;
+	extSPSPPS.Header.BufferSz = sizeof(mfxExtCodingOptionSPSPPS);
+
+	mfxU8 spsData[1024] = {};
+	extSPSPPS.SPSBuffer = spsData;
+	extSPSPPS.SPSBufSize = sizeof(spsData);
+
+	mfxU8 ppsData[1024] = {};
+	extSPSPPS.PPSBuffer = ppsData;
+	extSPSPPS.PPSBufSize = sizeof(ppsData);
+
+	mfxExtBuffer *extBuf = (mfxExtBuffer *)&extSPSPPS;
+
+	mfxVideoParam privateDataParam = {};
+
+	privateDataParam.NumExtParam = 1;
+	privateDataParam.ExtParam = &extBuf;
+
+	err = MFXVideoENCODE_GetVideoParam(_session, &privateDataParam);
+
+	if(err == MFX_ERR_NONE)
+	{
+		_privateSize = extSPSPPS.SPSBufSize;
+
+		_privateData = malloc(_privateSize);
+
+		if(_privateData != NULL)
+			memcpy(_privateData, extSPSPPS.SPSBuffer, _privateSize);
+		else
+			throw exportReturn_ErrMemory;
+	}
+	else
+		assert(err == MFX_ERR_UNSUPPORTED && codec == VP9); // unsupported in VP9
+
+
 	_outputBuffer.MaxLength = (encodeParams.mfx.BufferSizeInKB > 0 ? encodeParams.mfx.BufferSizeInKB * 1024 : bufferSize);
 	_outputBuffer.Data = (mfxU8 *)malloc(_outputBuffer.MaxLength);
 
@@ -244,6 +282,9 @@ IntelVPLEncoder::~IntelVPLEncoder()
 
 	if(_loader != NULL)
 		MFXUnload(_loader);
+
+	if (_privateData != NULL)
+		free(_privateData);
 }
 
 void *
