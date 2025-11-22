@@ -67,22 +67,39 @@ SDKGetIndFormat(imStdParms* stdParms, csSDK_size_t index, imIndFormatRec* SDKInd
 static prMALError 
 SDKOpenFile8(imStdParms* stdParms, imFileRef* SDKfileRef, imFileOpenRec8* SDKfileOpenRec8)
 {
-    ImporterLocalRec8H localRecH = (ImporterLocalRec8H)stdParms->piSuites->memFuncs->newHandle(sizeof(ImporterLocalRec8));
-    SDKfileOpenRec8->privatedata = (PrivateDataPtr)localRecH;
-    
-    stdParms->piSuites->memFuncs->lockHandle(reinterpret_cast<char**>(localRecH));
-    ImporterLocalRec8Ptr localRecP = reinterpret_cast<ImporterLocalRec8Ptr>(*localRecH);
+    ImporterLocalRec8H localRecH = NULL;
+    ImporterLocalRec8Ptr localRecP = NULL;
 
-    localRecP->BasicSuite = stdParms->piSuites->utilFuncs->getSPBasicSuite();
-    localRecP->BasicSuite->AcquireSuite(kPrSDKPPixCreatorSuite, kPrSDKPPixCreatorSuiteVersion, (const void**)&localRecP->PPixCreatorSuite);
-    localRecP->BasicSuite->AcquireSuite(kPrSDKPPixCacheSuite, kPrSDKPPixCacheSuiteVersion, (const void**)&localRecP->PPixCacheSuite);
-    localRecP->BasicSuite->AcquireSuite(kPrSDKPPixSuite, kPrSDKPPixSuiteVersion, (const void**)&localRecP->PPixSuite);
-    localRecP->BasicSuite->AcquireSuite(kPrSDKTimeSuite, kPrSDKTimeSuiteVersion, (const void**)&localRecP->TimeSuite);
-    localRecP->memFuncs = stdParms->piSuites->memFuncs;
-    localRecP->fmt_ctx = NULL;
-    localRecP->videoStreamIdx = -1;
-    localRecP->videoCodecCtx = NULL;
-    localRecP->swsCtx = NULL;
+    if(SDKfileOpenRec8->privatedata)
+    {
+        localRecH = (ImporterLocalRec8H)SDKfileOpenRec8->privatedata;
+        stdParms->piSuites->memFuncs->lockHandle(reinterpret_cast<char**>(localRecH));
+        localRecP = reinterpret_cast<ImporterLocalRec8Ptr>(*localRecH);
+    }
+    else
+    {
+        localRecH = (ImporterLocalRec8H)stdParms->piSuites->memFuncs->newHandle(sizeof(ImporterLocalRec8));
+        SDKfileOpenRec8->privatedata = (PrivateDataPtr)localRecH;
+        
+        stdParms->piSuites->memFuncs->lockHandle(reinterpret_cast<char**>(localRecH));
+        localRecP = reinterpret_cast<ImporterLocalRec8Ptr>(*localRecH);
+        
+        localRecP->BasicSuite = stdParms->piSuites->utilFuncs->getSPBasicSuite();
+        localRecP->BasicSuite->AcquireSuite(kPrSDKPPixCreatorSuite, kPrSDKPPixCreatorSuiteVersion, (const void**)&localRecP->PPixCreatorSuite);
+        localRecP->BasicSuite->AcquireSuite(kPrSDKPPixCacheSuite, kPrSDKPPixCacheSuiteVersion, (const void**)&localRecP->PPixCacheSuite);
+        localRecP->BasicSuite->AcquireSuite(kPrSDKPPixSuite, kPrSDKPPixSuiteVersion, (const void**)&localRecP->PPixSuite);
+        localRecP->BasicSuite->AcquireSuite(kPrSDKTimeSuite, kPrSDKTimeSuiteVersion, (const void**)&localRecP->TimeSuite);
+        localRecP->memFuncs = stdParms->piSuites->memFuncs;
+
+        localRecP->fmt_ctx = NULL;
+        localRecP->videoCodecCtx = NULL;
+        localRecP->swsCtx = NULL;
+    }
+
+    if (localRecP->fmt_ctx) {
+        stdParms->piSuites->memFuncs->unlockHandle(reinterpret_cast<char**>(localRecH));
+        return malNoError;
+    }
 
     std::string path8;
     #ifdef PRWIN_ENV
@@ -91,13 +108,16 @@ SDKOpenFile8(imStdParms* stdParms, imFileRef* SDKfileRef, imFileOpenRec8* SDKfil
     #endif
 
     if (avformat_open_input(&localRecP->fmt_ctx, path8.c_str(), NULL, NULL) < 0) {
+        stdParms->piSuites->memFuncs->unlockHandle(reinterpret_cast<char**>(localRecH));
         return imFileOpenFailed;
     }
 
     if (avformat_find_stream_info(localRecP->fmt_ctx, NULL) < 0) {
+        stdParms->piSuites->memFuncs->unlockHandle(reinterpret_cast<char**>(localRecH));
         return imFileOpenFailed;
     }
 
+    localRecP->videoStreamIdx = -1;
     for (unsigned int i = 0; i < localRecP->fmt_ctx->nb_streams; i++) {
         if (localRecP->fmt_ctx->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
             localRecP->videoStreamIdx = i;
@@ -109,7 +129,7 @@ SDKOpenFile8(imStdParms* stdParms, imFileRef* SDKfileRef, imFileOpenRec8* SDKfil
             localRecP->videoCodecCtx = avcodec_alloc_context3(codec);
             avcodec_parameters_to_context(localRecP->videoCodecCtx, localRecP->videoStream->codecpar);
 
-            localRecP->videoCodecCtx->thread_count = 0; 
+            localRecP->videoCodecCtx->thread_count = 0;
 
             if (avcodec_open2(localRecP->videoCodecCtx, codec, NULL) < 0) {
                 continue;
@@ -123,7 +143,10 @@ SDKOpenFile8(imStdParms* stdParms, imFileRef* SDKfileRef, imFileOpenRec8* SDKfil
         }
     }
 
-    if (localRecP->videoStreamIdx == -1) return imFileHasNoImportableStreams;
+    if (localRecP->videoStreamIdx == -1) {
+        stdParms->piSuites->memFuncs->unlockHandle(reinterpret_cast<char**>(localRecH));
+        return imFileHasNoImportableStreams;
+    }
 
     stdParms->piSuites->memFuncs->unlockHandle(reinterpret_cast<char**>(localRecH));
     return malNoError;
