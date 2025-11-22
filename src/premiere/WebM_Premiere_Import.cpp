@@ -268,3 +268,138 @@ SDKGetIndPixelFormat(imStdParms* stdParms, csSDK_size_t idx, imIndPixelFormatRec
     }
     return imBadFormatIndex;
 }
+static prMALError 
+SDKInit(imStdParms* stdParms, imImportInfoRec* importInfo)
+{
+    importInfo->canSave          = kPrFalse;
+    importInfo->canDelete        = kPrFalse;
+    importInfo->canCalcSizes     = kPrFalse;
+    importInfo->canTrim          = kPrFalse;
+    importInfo->hasSetup         = kPrFalse;
+    importInfo->setupOnDblClk    = kPrFalse;
+    importInfo->dontCache        = kPrFalse;
+    importInfo->keepLoaded       = kPrFalse;
+    importInfo->priority         = 0;
+    importInfo->avoidAudioConform = kPrTrue; 
+
+    return malNoError;
+}
+
+static prMALError 
+SDKQuietFile(imStdParms* stdParms, imFileRef* SDKfileRef, void* privateData)
+{
+    ImporterLocalRec8H ldataH = reinterpret_cast<ImporterLocalRec8H>(privateData);
+    if(ldataH && *ldataH) {
+        stdParms->piSuites->memFuncs->lockHandle(reinterpret_cast<char**>(ldataH));
+        ImporterLocalRec8Ptr localRecP = reinterpret_cast<ImporterLocalRec8Ptr>(*ldataH);
+
+        if (localRecP->swsCtx) {
+            sws_freeContext(localRecP->swsCtx);
+            localRecP->swsCtx = NULL;
+        }
+        if (localRecP->videoCodecCtx) {
+            avcodec_free_context(&localRecP->videoCodecCtx);
+            localRecP->videoCodecCtx = NULL;
+        }
+        if (localRecP->fmt_ctx) {
+            avformat_close_input(&localRecP->fmt_ctx);
+            localRecP->fmt_ctx = NULL;
+        }
+
+        stdParms->piSuites->memFuncs->unlockHandle(reinterpret_cast<char**>(ldataH));
+    }
+    return malNoError;
+}
+
+static prMALError 
+SDKAnalysis(imStdParms* stdParms, imFileRef SDKfileRef, imAnalysisRec* SDKAnalysisRec)
+{
+    return malNoError;
+}
+
+PREMPLUGENTRY DllExport xImportEntry (
+    csSDK_int32     selector, 
+    imStdParms      *stdParms, 
+    void            *param1, 
+    void            *param2)
+{
+    prMALError result = imUnsupported;
+
+    try {
+        switch (selector)
+        {
+            case imInit:
+                result = SDKInit(stdParms, reinterpret_cast<imImportInfoRec*>(param1));
+                break;
+
+            case imGetInfo8:
+                result = SDKGetInfo8(stdParms, 
+                                     reinterpret_cast<imFileAccessRec8*>(param1), 
+                                     reinterpret_cast<imFileInfoRec8*>(param2));
+                break;
+
+            case imOpenFile8:
+                result = SDKOpenFile8(stdParms, 
+                                      reinterpret_cast<imFileRef*>(param1), 
+                                      reinterpret_cast<imFileOpenRec8*>(param2));
+                break;
+            
+            case imQuietFile:
+                result = SDKQuietFile(stdParms, 
+                                      reinterpret_cast<imFileRef*>(param1), 
+                                      param2); 
+                break;
+
+            case imCloseFile:
+                result = SDKCloseFile(stdParms, 
+                                      reinterpret_cast<imFileRef*>(param1), 
+                                      param2);
+                break;
+
+            case imAnalysis:
+                result = SDKAnalysis(stdParms,
+                                     reinterpret_cast<imFileRef>(param1),
+                                     reinterpret_cast<imAnalysisRec*>(param2));
+                break;
+
+            case imGetIndFormat:
+                result = SDKGetIndFormat(stdParms, 
+                                         reinterpret_cast<csSDK_size_t>(param1),
+                                         reinterpret_cast<imIndFormatRec*>(param2));
+                break;
+
+            case imGetIndPixelFormat:
+                result = SDKGetIndPixelFormat(stdParms,
+                                              reinterpret_cast<csSDK_size_t>(param1),
+                                              reinterpret_cast<imIndPixelFormatRec*>(param2));
+                break;
+
+            case imGetSupports8:
+                result = malSupports8;
+                break;
+
+            case imGetPreferredFrameSize:
+                result = imIterateFrameSizes; 
+                break;
+
+            case imGetSourceVideo:
+                result = SDKGetSourceVideo(stdParms,
+                                           reinterpret_cast<imFileRef>(param1),
+                                           reinterpret_cast<imSourceVideoRec*>(param2));
+                break;
+                
+            case imImportAudio7:
+                result = imUnsupported; 
+                break;
+
+            case imCreateAsyncImporter:
+                result = imUnsupported;
+                break;
+        }
+    
+    } catch(...) { 
+        result = imOtherErr; 
+    }
+
+    return result;
+}
