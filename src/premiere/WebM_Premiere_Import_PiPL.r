@@ -46,5 +46,6 @@ resource 'IMPT' (1000)
 {
 	// drawtype - this unique fourcc is required by After Effects,
 	// and is not related to the filetype(s) supported by this importer
-	0x5765624D	// 'WebM'
+	0x46466D67	// 'FFmg' (FFmpeg)
+
 };
