@@ -7,7 +7,6 @@
 #include "PrSDKPPixCacheSuite.h"
 #include "PrSDKPPixSuite.h"
 #include "PrSDKTimeSuite.h"
-#include "PrSDKStreamSuite.h"
 
 extern "C" {
     #include <libavformat/avformat.h>
@@ -45,3 +44,4 @@ typedef struct
 } ImporterLocalRec8, *ImporterLocalRec8Ptr, **ImporterLocalRec8H;
 
 #endif
+
