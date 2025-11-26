@@ -203,8 +203,8 @@ SDKGetSourceVideo(imStdParms* stdParms, imFileRef fileRef, imSourceVideoRec* sou
     localRecP->TimeSuite->GetTicksPerSecond(&ticksPerSec);
 
     int64_t targetPTS = av_rescale_q(sourceVideoRec->inFrameTime, 
-                                 av_make_q(1, (int)ticksPerSec), 
-                                 localRecP->videoStream->time_base);
+                                     av_make_q(1, (int)ticksPerSec), 
+                                     localRecP->videoStream->time_base);
 
     av_seek_frame(localRecP->fmt_ctx, localRecP->videoStreamIdx, targetPTS, AVSEEK_FLAG_BACKWARD);
     avcodec_flush_buffers(localRecP->videoCodecCtx);
