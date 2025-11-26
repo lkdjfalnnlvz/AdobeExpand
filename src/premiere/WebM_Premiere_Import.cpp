@@ -303,7 +303,7 @@ SDKInit(imStdParms* stdParms, imImportInfoRec* importInfo)
     importInfo->setupOnDblClk    = kPrFalse;
     importInfo->dontCache        = kPrFalse;
     importInfo->keepLoaded       = kPrFalse;
-    importInfo->priority         = 0;
+    importInfo->priority         = 255;
     importInfo->avoidAudioConform = kPrTrue; 
 
     return malNoError;
