@@ -12,6 +12,7 @@ std::string Utf16ToUtf8(const prUTF16Char* utf16) {
     if (!strTo.empty() && strTo.back() == 0) strTo.pop_back();
     return strTo;
 }
+#endif
 
 static prMALError 
 SDKGetIndFormat(imStdParms* stdParms, csSDK_size_t index, imIndFormatRec* SDKIndFormatRec)
